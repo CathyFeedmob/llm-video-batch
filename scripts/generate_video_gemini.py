@@ -34,8 +34,13 @@ def main():
     # Create client using the SDK default behavior (matches the example on the docs)
     client = genai.Client()
 
-    #prompt = "Panning wide shot of a calico kitten sleeping in the sunshine"
-    prompt = """In the center of the futuristic circus, a lone acrobat, known as the "Neon Blade," takes the stage. Her cybernetic arms gleam under the pulsing neon lights, each finger tipped with micro-lasers that carve glowing trails through the air. She leaps onto a hovering platform, suspended by anti-gravity drones, and begins her act. With a single flip, she activates her retractable leg blades, slicing through holographic rings projected mid-air. Her movements are precise and calculated, enhanced by neural implants that synchronize her performance with the rhythm of the electronic music blasting through the arena. Sparks fly as she lands on a spinning metallic wheel, balancing effortlessly while igniting a cascade of shimmering plasma from her suit. The audience gasps, their faces illuminated by the ever-changing hues of her dazzling performance."""
+    # Read prompt from src/video_prompt.txt
+    try:
+        with open("src/video_prompt.txt", "r") as f:
+            prompt = f.read().strip()
+    except FileNotFoundError:
+        print("Error: src/video_prompt.txt not found. Using default prompt.")
+        prompt = """In the center of the futuristic circus, a lone acrobat, known as the "Neon Blade," takes the stage. Her cybernetic arms gleam under the pulsing neon lights, each finger tipped with micro-lasers that carve glowing trails through the air. She leaps onto a hovering platform, suspended by anti-gravity drones, and begins her act. With a single flip, she activates her retractable leg blades, slicing through holographic rings projected mid-air. Her movements are precise and calculated, enhanced by neural implants that synchronize her performance with the rhythm of the electronic music blasting through the arena. Sparks fly as she lands on a spinning metallic wheel, balancing effortlessly while igniting a cascade of shimmering plasma from her suit. The audience gasps, their faces illuminated by the ever-changing hues of her dazzling performance."""
 
     print("Step 1: Generate an image with Imagen...")
     imagen = client.models.generate_images(
@@ -69,25 +74,16 @@ def main():
     video = resp.generated_videos[0]
     print("Downloading the video...")
 
-    # Follow the example: download then save using the SDK convenience methods.
-    # Many SDK versions allow client.files.download(file=video.video) and the
-    # returned/attached object often has a .save(path) method.
     try:
-        # Initiate download (some SDKs require capturing the return value; others
-        # attach the file object to video.video). We'll attempt both behaviors.
         res = client.files.download(file=video.video)
 
-        # If the SDK returns an object with save(), use it.
         if hasattr(res, "save"):
             res.save(str(OUT_FILE))
-        # If the video object itself has save(), use that.
         elif hasattr(video.video, "save"):
             video.video.save(str(OUT_FILE))
-        # If the download returns raw bytes via read(), write them out.
         elif hasattr(res, "read"):
             with open(OUT_FILE, "wb") as f:
                 f.write(res.read())
-        # Fallback: try to write bytes stored on the video object
         else:
             data = getattr(video.video, "data", None)
             if data:
