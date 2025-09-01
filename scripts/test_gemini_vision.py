@@ -2,6 +2,8 @@ import os
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+import datetime
+import random
 
 load_dotenv() # Load environment variables from .env file
 
@@ -42,6 +44,27 @@ response = client.models.generate_content(
         "Describe this image in detail."
     ],
 )
+
+# Get a brief description for renaming
+brief_response = client.models.generate_content(
+    model="gemini-2.5-flash",
+    contents=[
+        image_part,
+        "Provide a very brief, one or two word description of the main object in this image."
+    ],
+)
+brief_description = brief_response.text.strip().replace(" ", "_").replace("/", "_").replace("\\", "_").replace(":", "_").replace("*", "_").replace("?", "_").replace("\"", "_").replace("<", "_").replace(">", "_").replace("|", "_")
+
+# Generate a timestamp and random number for the new filename
+timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+random_num = random.randint(1000, 9999)
+file_extension = os.path.splitext(image_path)[1]
+new_filename = f"{brief_description}_{timestamp}_{random_num}{file_extension}"
+new_image_path = os.path.join(image_directory, new_filename)
+
+# Rename the image file
+os.rename(image_path, new_image_path)
+print(f"Image renamed to: {new_filename}")
 
 print("API call successful. Writing description to file...")
 with open("src/image_description.txt", "w") as f:
