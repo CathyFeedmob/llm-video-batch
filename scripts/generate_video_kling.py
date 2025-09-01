@@ -250,6 +250,18 @@ def main():
             print(f"An unexpected error occurred during polling: {e}")
             return
 
+    # Save the refined video prompt to the JSON file before moving
+    try:
+        with open(json_file_path, "r+") as f:
+            data = json.load(f)
+            data["refined_video_prompt"] = refined_video_prompt
+            f.seek(0)  # Rewind to the beginning of the file
+            json.dump(data, f, indent=2)
+            f.truncate() # Truncate any remaining old content
+        print(f"Saved refined video prompt to {json_file_path}")
+    except Exception as e:
+        print(f"Error saving refined video prompt to JSON file: {e}")
+
     # Move the processed JSON file to the 'used' directory
     try:
         shutil.move(json_file_path, JSON_USED_DIR / Path(json_file_path).name)
