@@ -18,11 +18,33 @@ This script:
 import time
 import os
 from pathlib import Path
+from datetime import datetime
 from google import genai
+import dotenv # Import dotenv
 
 OUT_DIR = Path("out")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
-OUT_FILE = OUT_DIR / "veo3_with_image_input.mp4"
+
+dotenv.load_dotenv() # Load environment variables from .env
+
+def get_single_prompt_from_text(client, text_content, purpose):
+    """
+    Uses a Gemini model to extract a single, accurate prompt from multi-option text.
+    """
+    response = client.models.generate_content(
+        model="gemini-2.5-flash", # Use the model directly here
+        contents=[
+            f"Given the following text, extract the single most suitable and accurate prompt for {purpose} generation. "
+            "Focus on clarity, conciseness, and effectiveness for a generative AI model. "
+            "Do not include any introductory or concluding remarks, just the prompt itself.\n\n"
+            f"Text:\n{text_content}"
+        ]
+    )
+    try:
+        return response.text.strip()
+    except ValueError:
+        print(f"Error: Could not get text from Gemini response for {purpose}. Full response: {response}")
+        return ""
 
 def main():
     # Require the API key to be present as an env var. The official example uses
@@ -34,18 +56,52 @@ def main():
     # Create client using the SDK default behavior (matches the example on the docs)
     client = genai.Client()
 
-    # Read prompt from src/video_prompt.txt
+    # Read raw content of image generation prompt file
     try:
-        with open("src/video_prompt.txt", "r") as f:
-            prompt = f.read().strip()
+        with open("src/img_gen.txt", "r") as f:
+            raw_image_text = f.read()
     except FileNotFoundError:
-        print("Error: src/video_prompt.txt not found. Using default prompt.")
-        prompt = """In the center of the futuristic circus, a lone acrobat, known as the "Neon Blade," takes the stage. Her cybernetic arms gleam under the pulsing neon lights, each finger tipped with micro-lasers that carve glowing trails through the air. She leaps onto a hovering platform, suspended by anti-gravity drones, and begins her act. With a single flip, she activates her retractable leg blades, slicing through holographic rings projected mid-air. Her movements are precise and calculated, enhanced by neural implants that synchronize her performance with the rhythm of the electronic music blasting through the arena. Sparks fly as she lands on a spinning metallic wheel, balancing effortlessly while igniting a cascade of shimmering plasma from her suit. The audience gasps, their faces illuminated by the ever-changing hues of her dazzling performance."""
+        print("Error: src/img_gen.txt not found. Using default raw image text.")
+        raw_image_text = "A futuristic city at sunset, with flying cars and neon lights."
+
+    # Read raw content of video generation prompt file
+    try:
+        with open("src/video_gen.txt", "r") as f:
+            raw_video_text = f.read()
+    except FileNotFoundError:
+        print("Error: src/video_gen.txt not found. Using default raw video text.")
+        raw_video_text = "A short video of a futuristic city at sunset, with flying cars moving through neon-lit streets."
+
+    print("Step 0: Using Gemini to refine prompts...")
+    image_prompt = get_single_prompt_from_text(client, raw_image_text, "image")
+    video_prompt = get_single_prompt_from_text(client, raw_video_text, "video")
+
+    if not image_prompt:
+        print("Error: Failed to get a refined image prompt. Exiting.")
+        return
+    if not video_prompt:
+        print("Error: Failed to get a refined video prompt. Exiting.")
+        return
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    concise_image_idea = get_single_prompt_from_text(
+        client,
+        image_prompt,
+        "a 5-letter concise main idea for an image generation prompt. Only return the 5 letters, no other text."
+    )
+    # Ensure it's exactly 5 letters and alphanumeric
+    concise_image_idea = "".join(filter(str.isalnum, concise_image_idea)).lower()[:5]
+    if len(concise_image_idea) < 5:
+        # Fallback if Gemini doesn't return 5 letters
+        concise_image_idea = "idea_" + concise_image_idea # Add a prefix to make it unique
+
+    OUT_FILE = OUT_DIR / f"generated_video_{concise_image_idea}_{timestamp}.mp4"
 
     print("Step 1: Generate an image with Imagen...")
     imagen = client.models.generate_images(
         model="imagen-4.0-generate-001",
-        prompt=prompt,
+        prompt=image_prompt,
     )
 
     if not getattr(imagen, "generated_images", None):
@@ -55,7 +111,7 @@ def main():
     print("Image generated. Step 2: Generate video with VEO 3...")
     operation = client.models.generate_videos(
         model="veo-3.0-generate-preview",
-        prompt=prompt,
+        prompt=video_prompt,
         image=imagen.generated_images[0].image,
     )
 
