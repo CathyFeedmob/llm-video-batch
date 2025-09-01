@@ -25,6 +25,7 @@ import dotenv
 import jwt
 import base64 # Import base64
 import google.generativeai as genai # Import google.generativeai
+import subprocess # Import subprocess
 
 OUT_DIR = Path("out")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -67,6 +68,13 @@ def refine_prompt_with_gemini(original_prompt):
         return original_prompt # Return original prompt if refinement fails
 
 def main():
+    print("Executing scripts/test_gemini_vision.py to prepare image and JSON data...")
+    result = subprocess.run(["python3", "scripts/test_gemini_vision.py"], capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"Error executing test_gemini_vision.py: {result.stderr}")
+        return
+    print("test_gemini_vision.py executed successfully.")
+
     KLING_ACCESS_KEY = os.environ.get("KLING_ACCESS_KEY")
     KLING_SECRET_KEY = os.environ.get("KLING_SECRET_KEY")
     if not KLING_ACCESS_KEY or not KLING_SECRET_KEY:
