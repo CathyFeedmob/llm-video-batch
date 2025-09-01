@@ -78,7 +78,7 @@ def process_image_and_generate_prompts(image_directory="img/ready/"):
     video_prompt_response = client.models.generate_content(
         model="gemini-2.5-flash",
         contents=[
-            f"Convert the following image description into a concise prompt suitable for a video generation model: {response.text}"
+            f"Convert the following image description into a concise prompt suitable for a video generation model. Focus exclusively on movement, changes, human expression, or background alterations. Absolutely avoid any static image descriptions. Keep it concise (under 100 words): {response.text}"
         ],
     )
     video_prompt = video_prompt_response.text

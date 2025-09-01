@@ -30,6 +30,8 @@ OUT_DIR = Path("out")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 JSON_USED_DIR = Path("out/prompt_json/used")
 JSON_USED_DIR.mkdir(parents=True, exist_ok=True)
+IMG_GENERATED_DIR = Path("img/generated")
+IMG_GENERATED_DIR.mkdir(parents=True, exist_ok=True)
 
 dotenv.load_dotenv()
 
@@ -55,7 +57,7 @@ def refine_prompt_with_gemini(original_prompt):
         model = genai.GenerativeModel('gemini-2.5-flash')
         print(f"Refining prompt with Gemini 2.5 Flash: '{original_prompt}'")
         response = model.generate_content(
-            f"Refine the following video prompt for a image-to-video model. Focus on action and narrative, avoiding image descriptions. Keep it concise (under 100 words): {original_prompt}"
+            f"Refine the following video prompt for an image-to-video model. Focus exclusively on movement, changes, human expression, or background alterations. Absolutely avoid any static image descriptions. Keep it concise (under 100 words): {original_prompt}"
         )
         refined_prompt = response.text.strip()
         print(f"Refined prompt: '{refined_prompt}'")
@@ -78,16 +80,41 @@ def main():
 
     api_token = encode_jwt_token(KLING_ACCESS_KEY, KLING_SECRET_KEY)
 
-    if len(sys.argv) < 3:
-        print("Usage: python3 scripts/generate_video_kling.py <path_to_image_file> <path_to_json_file>")
-        return
-    
-    image_file_path = sys.argv[1]
-    json_file_path = sys.argv[2]
+    JSON_PROMPT_DIR = Path("out/prompt_json")
+    IMG_READY_DIR = Path("img/ready")
 
-    if not Path(image_file_path).exists():
-        print(f"Error: Image file not found at {image_file_path}")
-        return
+    image_file_path = None
+    json_file_path = None
+
+    if len(sys.argv) < 3:
+        print("No image or JSON file paths provided. Attempting to find files automatically...")
+        json_files = list(JSON_PROMPT_DIR.glob("*.json"))
+        if not json_files:
+            print(f"Error: No JSON files found in {JSON_PROMPT_DIR}. Please provide paths or ensure files exist.")
+            return
+        
+        # For simplicity, pick the first JSON file found
+        json_file_path = json_files[0]
+        json_stem = json_file_path.stem
+        print(f"Found JSON file: {json_file_path}")
+
+        # Try to find a corresponding image file in img/ready/
+        for ext in [".png", ".jpg", ".jpeg"]:
+            potential_image_path = IMG_READY_DIR / f"{json_stem}{ext}"
+            if potential_image_path.exists():
+                image_file_path = potential_image_path
+                print(f"Found corresponding image file: {image_file_path}")
+                break
+        
+        if not image_file_path:
+            print(f"Error: No image file found in {IMG_READY_DIR} corresponding to {json_stem}. Looked for {json_stem}.png, {json_stem}.jpg, {json_stem}.jpeg")
+            return
+    else:
+        image_file_path = sys.argv[1]
+        json_file_path = sys.argv[2]
+        if not Path(image_file_path).exists():
+            print(f"Error: Image file not found at {image_file_path}")
+            return
 
     try:
         with open(json_file_path, "r") as f:
@@ -130,7 +157,7 @@ def main():
         print("Image read and base64 encoded.")
 
         payload = {
-            "model_name": "kling-v1-6",
+            "model_name": "kling-v2-1",
             "mode": "std",
             "duration": "5",
             "image": encoded_image, # Send base64 encoded image
@@ -221,6 +248,13 @@ def main():
         print(f"Moved JSON file to {JSON_USED_DIR / Path(json_file_path).name}")
     except Exception as e:
         print(f"Error moving JSON file: {e}")
+
+    # Move the input image file to the 'generated' directory
+    try:
+        shutil.move(image_file_path, IMG_GENERATED_DIR / Path(image_file_path).name)
+        print(f"Moved image file to {IMG_GENERATED_DIR / Path(image_file_path).name}")
+    except Exception as e:
+        print(f"Error moving image file: {e}")
 
 if __name__ == "__main__":
     main()
