@@ -203,8 +203,8 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
-out/
 out/*.mp4
+!out/prompt_json/used/
 img/
 src/
 
