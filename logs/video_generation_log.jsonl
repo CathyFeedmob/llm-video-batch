@@ -1,0 +1,3 @@
+{"timestamp": "2025-09-02T15:46:44.247472", "image_used": "N/A", "video_name": "N/A", "processing_duration_seconds": 2.152601718902588, "json_file_path": "N/A", "status": "failure"}
+{"timestamp": "2025-09-02T15:49:34.066835", "image_used": "N/A", "video_name": "N/A", "processing_duration_seconds": 2.082608699798584, "json_file_path": "N/A", "status": "failure"}
+{"timestamp": "2025-09-02T16:02:16.094166", "image_used": "img/ready/Sorceress_20250902160028_5407.png", "video_name": "out/Sorceress_20250902160028_5407.mp4", "processing_duration_seconds": 131.21401715278625, "json_file_path": "out/prompt_json/Sorceress_20250902160028_5407.json", "status": "success"}
