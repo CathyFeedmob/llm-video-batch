@@ -211,3 +211,4 @@ src/
 # Added by Cline
 img/generated/
 src/*.txt
+tmp/
