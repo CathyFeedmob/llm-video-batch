@@ -14,6 +14,7 @@ client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_MODEL_NAME = os.getenv("OPENROUTER_MODEL_NAME")
 USE_OPENROUTER_FALLBACK = os.getenv("USE_OPENROUTER_FALLBACK", "false").lower() == "true"
+FREEIMAGE_API_KEY = os.getenv("FREEIMAGE_API_KEY")
 
 def openrouter_generate_content(model_name, contents):
     headers = {
@@ -51,6 +52,49 @@ def openrouter_generate_content(model_name, contents):
     response.raise_for_status() # Raise an exception for HTTP errors
 
     openrouter_response = response.json()
+
+def upload_image_to_freeimagehost(image_path):
+    """Uploads an image to freeimage.host and returns the URL."""
+    if not FREEIMAGE_API_KEY:
+        print("Error: FREEIMAGE_API_KEY environment variable not set. Cannot upload image.")
+        return None
+
+    try:
+        with open(image_path, "rb") as f:
+            image_data = f.read()
+
+        # Determine mime type dynamically
+        mime_type = "image/jpeg" if image_path.lower().endswith(('.jpg', '.jpeg')) else "image/png"
+
+        files = {
+            'source': (os.path.basename(image_path), image_data, mime_type),
+            'key': (None, FREEIMAGE_API_KEY),
+            'format': (None, 'json')
+        }
+        
+        print(f"Uploading image {image_path} to freeimage.host...")
+        response = requests.post("https://freeimage.host/api/1/upload", files=files)
+        response.raise_for_status()
+        
+        upload_result = response.json()
+        if upload_result.get("status_code") == 200 and upload_result.get("success"):
+            image_url = upload_result["image"]["url"]
+            print(f"Image uploaded successfully: {image_url}")
+            return image_url
+        else:
+            print(f"Freeimage.host upload failed: {upload_result.get('error', {}).get('message', 'Unknown error')}")
+            return None
+    except FileNotFoundError:
+        print(f"Error: Image file not found at {image_path}")
+        return None
+    except requests.exceptions.RequestException as e:
+        print(f"Error uploading to freeimage.host: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            print(f"Response content: {e.response.text}")
+        return None
+    except Exception as e:
+        print(f"An unexpected error occurred during freeimage.host upload: {e}")
+        return None
     
     # Convert OpenRouter response to mimic Gemini's response structure
     class MockTextResponse:
@@ -145,6 +189,10 @@ def process_image_and_generate_prompts(image_directory="img/ready/"):
     os.rename(image_path, new_image_path)
     print(f"Image renamed to: {pic_name}")
 
+    image_url = upload_image_to_freeimagehost(new_image_path)
+    if not image_url:
+        print("Failed to upload image to freeimage.host. Proceeding without image_url.")
+
     with open("src/image_description.txt", "w") as f:
         f.write(response.text)
     print("Description written to src/image_description.txt")
@@ -201,7 +249,8 @@ def process_image_and_generate_prompts(image_directory="img/ready/"):
         "pic_name": pic_name,
         "video_name": video_name,
         "video_prompt": video_prompt,
-        "image_prompt": image_prompt
+        "image_prompt": image_prompt,
+        "image_url": image_url # Add the image_url here
     }
 
 if __name__ == "__main__":

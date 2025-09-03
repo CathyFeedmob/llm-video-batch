@@ -181,12 +181,6 @@ def main():
             json_file_path = json_files[0]
             print(f"Found JSON file: {json_file_path}")
 
-        if not image_file_path:
-            print("No image URL provided. Attempting to find a corresponding image in img/ready/ or using a placeholder URL.")
-            image_file_path = "https://aisp.ttaibot.com/uploads/xz_aivideo/1735500936.jpg" # Placeholder
-            print(f"Using placeholder image URL: {image_file_path}")
-
-        final_image_file_path = image_file_path
         final_json_file_path = json_file_path
 
         try:
@@ -194,6 +188,7 @@ def main():
                 data = json.load(f)
                 video_prompt = data.get("video_prompt")
                 video_name = data.get("video_name")
+                image_url_from_json = data.get("image_url") # Get image_url from JSON
                 # Duomi specific parameters from JSON, if available
                 image_tail = data.get("image_tail", "")
                 image_list = data.get("image_list", [])
@@ -210,6 +205,19 @@ def main():
         if not video_prompt or not video_name:
             print("Error: JSON file must contain 'video_prompt' and 'video_name' keys.")
             return
+
+        # Use image_url from JSON if available, otherwise use placeholder or abort
+        if image_url_from_json:
+            image_file_path = image_url_from_json
+            print(f"Using image URL from JSON: {image_file_path}")
+        elif len(sys.argv) > 1: # If image_file_path was provided as a command line argument
+            image_file_path = sys.argv[1]
+            print(f"Using image URL from command line argument: {image_file_path}")
+        else:
+            print("Error: No image_url found in JSON and no image URL provided as command line argument. Aborting.")
+            return
+        
+        final_image_file_path = image_file_path
 
         print(f"Original video prompt: {video_prompt}")
         refined_video_prompt = refine_prompt_with_gemini(video_prompt)
