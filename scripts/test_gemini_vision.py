@@ -8,6 +8,7 @@ import json
 import requests
 from pathlib import Path
 import argparse # Import argparse for command-line arguments
+import time
 
 load_dotenv() # Load environment variables from .env file
 
@@ -117,7 +118,21 @@ def upload_image_to_freeimagehost(image_path):
 def _generate_content(api_source, model_name, contents):
     if api_source == "openrouter":
         print(f"Using OpenRouter API for model: {model_name}")
-        return openrouter_generate_content(model_name=OPENROUTER_MODEL_NAME, contents=contents)
+        retries = 3
+        delay = 5  # seconds
+        for attempt in range(retries):
+            try:
+                result = openrouter_generate_content(model_name=OPENROUTER_MODEL_NAME, contents=contents)
+                if result:
+                    return result
+                print(f"Attempt {attempt + 1} of {retries} failed, returned None. Retrying in {delay} seconds...")
+                time.sleep(delay)
+            except Exception as e:
+                print(f"An exception occurred on attempt {attempt + 1}: {e}")
+                if attempt + 1 == retries:
+                    raise  # Re-raise the last exception
+                time.sleep(delay)
+        raise Exception("Failed to get a valid response from OpenRouter after several retries.")
     else: # api_source == "gemini"
         try:
             print(f"Using Gemini API for model: {model_name}")
@@ -125,7 +140,21 @@ def _generate_content(api_source, model_name, contents):
         except Exception as e:
             if "503" in str(e) and USE_OPENROUTER_FALLBACK:
                 print(f"Gemini API overloaded (503) for model {model_name}. Falling back to OpenRouter.")
-                return openrouter_generate_content(model_name=OPENROUTER_MODEL_NAME, contents=contents)
+                retries = 3
+                delay = 5
+                for attempt in range(retries):
+                    try:
+                        result = openrouter_generate_content(model_name=OPENROUTER_MODEL_NAME, contents=contents)
+                        if result:
+                            return result
+                        print(f"Fallback attempt {attempt + 1} of {retries} failed, returned None. Retrying in {delay} seconds...")
+                        time.sleep(delay)
+                    except Exception as e_fallback:
+                        print(f"An exception occurred on fallback attempt {attempt + 1}: {e_fallback}")
+                        if attempt + 1 == retries:
+                            raise
+                        time.sleep(delay)
+                raise Exception("Failed to get a valid response from OpenRouter fallback after several retries.")
             else:
                 raise # Re-raise other ServerErrors or if fallback is not enabled
 
