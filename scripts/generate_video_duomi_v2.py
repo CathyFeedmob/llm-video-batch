@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Generate a short video using Duomi AI's imageToVideo API.
+Generate a short video using Duomi AI's imageToVideo API (proxy for Kling).
 
 Usage:
   pip install python-dotenv requests
   export DUOMI_API_KEY="YOUR_API_KEY"
-  python3 scripts/generate_video_duomi.py <image_url> <path_to_json_file>
+  python3 scripts/generate_video_duomi_v2.py <path_to_image_file> <path_to_json_file>
 
 This script:
-- Reads an image URL and video prompt from a JSON file.
+- Reads an image file and video prompt from a JSON file.
 - Calls the Duomi AI imageToVideo API to generate a video.
 - Polls the operation until completion.
 - Downloads and saves the resulting MP4.
@@ -22,6 +22,7 @@ import shutil
 from pathlib import Path
 from datetime import datetime
 import dotenv
+import base64
 import google.generativeai as genai
 from google.generativeai import types
 import subprocess
@@ -134,6 +135,47 @@ def log_video_generation(timestamp, image_used, video_name, processing_duration_
         f.write(json.dumps(log_entry) + "\n")
     print(f"Logged video generation: {status}")
 
+def upload_image_to_freeimage_host(image_path):
+    """Uploads an image to freeimage.host and returns the URL."""
+    FREEIMAGE_API_KEY = os.getenv("FREEIMAGE_API_KEY")
+    if not FREEIMAGE_API_KEY:
+        print("Error: FREEIMAGE_API_KEY environment variable not set. Cannot upload image.")
+        return None
+
+    try:
+        with open(image_path, "rb") as f:
+            image_data = f.read()
+
+        files = {
+            'source': (os.path.basename(image_path), image_data, 'image/png'), # Assuming PNG, adjust if needed
+            'key': (None, FREEIMAGE_API_KEY),
+            'format': (None, 'json')
+        }
+        
+        print(f"Uploading image {image_path} to freeimage.host...")
+        response = requests.post("https://freeimage.host/api/1/upload", files=files)
+        response.raise_for_status()
+        
+        upload_result = response.json()
+        if upload_result.get("status_code") == 200 and upload_result.get("success"):
+            image_url = upload_result["image"]["url"]
+            print(f"Image uploaded successfully: {image_url}")
+            return image_url
+        else:
+            print(f"Freeimage.host upload failed: {upload_result.get('error', {}).get('message', 'Unknown error')}")
+            return None
+    except FileNotFoundError:
+        print(f"Error: Image file not found at {image_path}")
+        return None
+    except requests.exceptions.RequestException as e:
+        print(f"Error uploading to freeimage.host: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            print(f"Response content: {e.response.text}")
+        return None
+    except Exception as e:
+        print(f"An unexpected error occurred during freeimage.host upload: {e}")
+        return None
+
 def main():
     # Initialize variables for logging
     generation_start_time = time.time()
@@ -166,20 +208,33 @@ def main():
         image_file_path = None
         json_file_path = None
 
-        if len(sys.argv) > 1:
-            image_file_path = sys.argv[1]
-        
-        if len(sys.argv) > 2:
-            json_file_path = sys.argv[2]
-
-        if not json_file_path:
-            print("No JSON file path provided. Attempting to find the latest JSON file automatically...")
-            json_files = sorted(JSON_PROMPT_DIR.glob("*.json"), key=os.path.getmtime, reverse=True)
+        if len(sys.argv) < 3:
+            print("No image or JSON file paths provided. Attempting to find files automatically...")
+            json_files = list(JSON_PROMPT_DIR.glob("*.json"))
             if not json_files:
-                print(f"Error: No JSON files found in {JSON_PROMPT_DIR}. Please provide a JSON file path or ensure files exist.")
+                print(f"Error: No JSON files found in {JSON_PROMPT_DIR}. Please provide paths or ensure files exist.")
                 return
+            
             json_file_path = json_files[0]
+            json_stem = json_file_path.stem
             print(f"Found JSON file: {json_file_path}")
+
+            for ext in [".png", ".jpg", ".jpeg"]:
+                potential_image_path = IMG_READY_DIR / f"{json_stem}{ext}"
+                if potential_image_path.exists():
+                    image_file_path = potential_image_path
+                    print(f"Found corresponding image file: {image_file_path}")
+                    break
+            
+            if not image_file_path:
+                print(f"Error: No image file found in {IMG_READY_DIR} corresponding to {json_stem}. Looked for {json_stem}.png, {json_stem}.jpg, {json_stem}.jpeg")
+                return
+        else:
+            image_file_path = sys.argv[1]
+            json_file_path = sys.argv[2]
+            if not Path(image_file_path).exists():
+                print(f"Error: Image file not found at {image_file_path}")
+                return
 
         final_json_file_path = json_file_path
 
@@ -188,7 +243,6 @@ def main():
                 data = json.load(f)
                 video_prompt = data.get("video_prompt")
                 video_name = data.get("video_name")
-                image_url_from_json = data.get("image_url") # Get image_url from JSON
                 # Duomi specific parameters from JSON, if available
                 image_tail = data.get("image_tail", "")
                 image_list = data.get("image_list", [])
@@ -206,19 +260,6 @@ def main():
             print("Error: JSON file must contain 'video_prompt' and 'video_name' keys.")
             return
 
-        # Use image_url from JSON if available, otherwise use placeholder or abort
-        if image_url_from_json:
-            image_file_path = image_url_from_json
-            print(f"Using image URL from JSON: {image_file_path}")
-        elif len(sys.argv) > 1: # If image_file_path was provided as a command line argument
-            image_file_path = sys.argv[1]
-            print(f"Using image URL from command line argument: {image_file_path}")
-        else:
-            print("Error: No image_url found in JSON and no image URL provided as command line argument. Aborting.")
-            return
-        
-        final_image_file_path = image_file_path
-
         print(f"Original video prompt: {video_prompt}")
         refined_video_prompt = refine_prompt_with_gemini(video_prompt)
         print(f"Refined video prompt: '{refined_video_prompt}'")
@@ -230,7 +271,23 @@ def main():
         OUT_FILE = OUT_DIR / f"{video_name_stem}.mp4"
         final_video_name = OUT_FILE
 
+        # Handle image upload if it's a local file
+        image_url_for_duomi = image_file_path
+        if Path(image_file_path).exists():
+            print(f"Local image file detected: {image_file_path}. Uploading to freeimage.host...")
+            uploaded_url = upload_image_to_freeimage_host(image_file_path)
+            if uploaded_url:
+                image_url_for_duomi = uploaded_url
+                final_image_file_path = uploaded_url # Update for logging
+            else:
+                print("Image upload to freeimage.host failed. Cannot proceed with video generation.")
+                return
+        else:
+            print(f"Image path is not a local file: {image_file_path}. Assuming it's a URL.")
+            final_image_file_path = image_file_path # Keep original for logging if it's already a URL
+
         print("Step 1: Calling Duomi AI image2video API...")
+        print(f"Using image URL for Duomi API: {image_url_for_duomi}") # Added print statement
         HEADERS = {
             "Authorization": DUOMI_API_KEY, # Direct API key
             "Content-Type": "application/json"
@@ -242,7 +299,7 @@ def main():
                 "model_name": "kling-v2-1", # User specified
                 "mode": "std",
                 "duration": int(duration), # Ensure integer
-                "image": image_file_path, # Image URL
+                "image": image_url_for_duomi, # Image URL from freeimage.host or original URL
                 "image_tail": image_tail,
                 "image_list": image_list,
                 "aspect_ratio": aspect_ratio,
@@ -295,53 +352,37 @@ def main():
                     time.sleep(10)
                     continue
 
+                # Ensure 'data' and 'task_status' exist in the response
+                if not status_data.get("data") or "task_status" not in status_data["data"]:
+                    print(f"Warning: 'data' or 'task_status' not found in Duomi API response. Response: {status_data}")
+                    time.sleep(10)
+                    continue
+
                 task_status = status_data["data"]["task_status"]
+                video_url = status_data["data"].get("task_result", {}).get("videos", [{}])[0].get("url")
                 
                 elapsed_time = time.time() - poll_start_time
-                print(f"Current video generation status: {task_status}, Elapsed time: {elapsed_time:.2f}s")
+                print(f"Current video generation status: {task_status}, Video URL: {video_url}, Elapsed time: {elapsed_time:.2f}s")
 
-                if task_status == "succeed":
-                    video_url = status_data["data"].get("task_result", {}).get("videos", [{}])[0].get("url")
-                    if video_url:
-                        print("Video generation complete. Downloading video...")
-                        video_response = requests.get(video_url, stream=True)
-                        video_response.raise_for_status()
+                if task_status == "succeed" and video_url:
+                    print("Video generation complete. Downloading video...")
+                    video_response = requests.get(video_url, stream=True)
+                    video_response.raise_for_status()
 
-                        with open(OUT_FILE, "wb") as f:
-                            for chunk in video_response.iter_content(chunk_size=8192):
-                                f.write(chunk)
-                        print(f"Generated video saved to {OUT_FILE}")
-                        print(f"Total video generation and download time: {elapsed_time:.2f}s")
-                        generation_status = "success"
-                    else:
-                        print("Video generation succeeded, but no video URL found in response. Waiting for video URL...")
-                        time.sleep(10)
-                        continue # Continue polling if URL not found yet
+                    with open(OUT_FILE, "wb") as f:
+                        for chunk in video_response.iter_content(chunk_size=8192):
+                            f.write(chunk)
+                    print(f"Generated video saved to {OUT_FILE}")
+                    print(f"Total video generation and download time: {elapsed_time:.2f}s")
+                    generation_status = "success"
+                    break
                 elif task_status in ["failed", "canceled"]:
                     print(f"Video generation failed or was canceled. Status: {task_status}")
                     generation_status = "failure"
+                    break
                 else:
                     print("Waiting for video generation to complete...")
                     time.sleep(10)
-                    continue # Continue polling if not succeeded/failed/canceled
-
-                # Move the image from img/ready to img/generated regardless of success or failure
-                pic_name = data.get("pic_name") # Get the original image name from JSON
-                if pic_name:
-                    source_image_path = IMG_READY_DIR / pic_name
-                    destination_image_path = IMG_GENERATED_DIR / pic_name
-                    try:
-                        if source_image_path.exists():
-                            shutil.move(source_image_path, destination_image_path)
-                            print(f"Moved image {pic_name} from {IMG_READY_DIR} to {IMG_GENERATED_DIR}")
-                        else:
-                            print(f"Image {pic_name} not found in {IMG_READY_DIR}. Skipping move.")
-                    except Exception as e:
-                        print(f"Error moving image {pic_name}: {e}")
-                else:
-                    print("Image name (pic_name) not found in JSON. Cannot move image.")
-                
-                break # Break the loop once status is succeed, failed, or canceled
 
             except requests.exceptions.RequestException as e:
                 print(f"Error polling Duomi API status: {e}")
@@ -371,13 +412,16 @@ def main():
         except Exception as e:
             print(f"Error moving JSON file: {e}")
 
-        # The image_file_path is a URL, so it cannot be moved like a local file.
-        # This block is intentionally commented out or removed.
-        # try:
-        #     shutil.move(image_file_path, IMG_GENERATED_DIR / Path(image_file_path).name)
-        #     print(f"Moved image file to {IMG_GENERATED_DIR / Path(image_file_path).name}")
-        # except Exception as e:
-        #     print(f"Error moving image file: {e}")
+        # Move the original local image file to IMG_GENERATED_DIR if it was a local file
+        # and not already a URL.
+        if Path(image_file_path).exists() and not str(image_file_path).startswith("http"):
+            try:
+                shutil.move(image_file_path, IMG_GENERATED_DIR / Path(image_file_path).name)
+                print(f"Moved image file to {IMG_GENERATED_DIR / Path(image_file_path).name}")
+            except Exception as e:
+                print(f"Error moving image file: {e}")
+        else:
+            print(f"Image file was not a local path or was already a URL, skipping move to {IMG_GENERATED_DIR}.")
 
     except Exception as e:
         print(f"An unhandled error occurred in main: {e}")

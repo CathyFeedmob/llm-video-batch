@@ -7,6 +7,7 @@ import random
 import json
 import requests
 from pathlib import Path
+import argparse # Import argparse for command-line arguments
 
 load_dotenv() # Load environment variables from .env file
 
@@ -15,6 +16,10 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_MODEL_NAME = os.getenv("OPENROUTER_MODEL_NAME")
 USE_OPENROUTER_FALLBACK = os.getenv("USE_OPENROUTER_FALLBACK", "false").lower() == "true"
 FREEIMAGE_API_KEY = os.getenv("FREEIMAGE_API_KEY")
+
+class MockTextResponse:
+    def __init__(self, text):
+        self.text = text
 
 def openrouter_generate_content(model_name, contents):
     headers = {
@@ -25,23 +30,23 @@ def openrouter_generate_content(model_name, contents):
     # OpenRouter expects 'model' and 'messages' in the payload
     # We need to convert the 'contents' from Gemini format to OpenRouter's 'messages' format
     messages = []
+    parts_for_message = []
     for content_part in contents:
-        if isinstance(content_part, types.Part):
-            # Assuming image parts are handled by base64 encoding for OpenRouter if needed
-            # For now, focusing on text parts
+        if isinstance(content_part, types.Part): # This is for Gemini's types.Part
             if content_part.text:
-                messages.append({"role": "user", "content": content_part.text})
-            elif content_part.inline_data:
-                # Handle image data for OpenRouter if it supports it directly in messages
-                # This is a simplified approach, OpenRouter might need specific image handling
-                messages.append({
-                    "role": "user",
-                    "content": [
-                        {"type": "image_url", "image_url": {"url": f"data:{content_part.inline_data.mime_type};base64,{content_part.inline_data.data.decode('utf-8')}"}}
-                    ]
+                parts_for_message.append({"type": "text", "text": content_part.text})
+            elif content_part.inline_data: # This case should ideally not be hit if image_url is used
+                parts_for_message.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{content_part.inline_data.mime_type};base64,{content_part.inline_data.data}"}
                 })
-        else:
-            messages.append({"role": "user", "content": content_part})
+        elif isinstance(content_part, dict) and content_part.get("type") == "image_url":
+            # This is for the image_url dictionary we construct in process_image_and_generate_prompts
+            parts_for_message.append(content_part)
+        else: # Assuming it's a string for text content
+            parts_for_message.append({"type": "text", "text": content_part})
+
+    messages.append({"role": "user", "content": parts_for_message})
 
     payload = {
         "model": model_name,
@@ -49,9 +54,22 @@ def openrouter_generate_content(model_name, contents):
     }
 
     response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload)
-    response.raise_for_status() # Raise an exception for HTTP errors
+    try:
+        response.raise_for_status() # Raise an exception for HTTP errors
+    except requests.exceptions.HTTPError as e:
+        print(f"OpenRouter HTTP Error: {e}")
+        print(f"OpenRouter Response Content: {response.text}")
+        raise # Re-raise the exception after printing details
 
     openrouter_response = response.json()
+    
+    if openrouter_response and openrouter_response.get("choices"):
+        # Assuming the first choice contains the relevant text
+        generated_text = openrouter_response["choices"][0]["message"]["content"]
+        return generated_text
+    else:
+        print("OpenRouter response did not contain expected content (choices not found).")
+        return None # Explicitly return None if choices are not found
 
 def upload_image_to_freeimagehost(image_path):
     """Uploads an image to freeimage.host and returns the URL."""
@@ -95,24 +113,21 @@ def upload_image_to_freeimagehost(image_path):
     except Exception as e:
         print(f"An unexpected error occurred during freeimage.host upload: {e}")
         return None
-    
-    # Convert OpenRouter response to mimic Gemini's response structure
-    class MockTextResponse:
-        def __init__(self, text):
-            self.text = text
-            
-    class MockContentResponse:
-        def __init__(self, text_response):
-            self.text = text_response.text
-            self.parts = [types.Part(text=text_response.text)] # Mimic parts if needed
 
-    if openrouter_response and openrouter_response.get("choices"):
-        # Assuming the first choice contains the relevant text
-        generated_text = openrouter_response["choices"][0]["message"]["content"]
-        return MockContentResponse(MockTextResponse(generated_text))
-    else:
-        raise Exception("OpenRouter response did not contain expected content.")
-
+def _generate_content(api_source, model_name, contents):
+    if api_source == "openrouter":
+        print(f"Using OpenRouter API for model: {model_name}")
+        return openrouter_generate_content(model_name=OPENROUTER_MODEL_NAME, contents=contents)
+    else: # api_source == "gemini"
+        try:
+            print(f"Using Gemini API for model: {model_name}")
+            return client.models.generate_content(model=model_name, contents=contents)
+        except Exception as e:
+            if "503" in str(e) and USE_OPENROUTER_FALLBACK:
+                print(f"Gemini API overloaded (503) for model {model_name}. Falling back to OpenRouter.")
+                return openrouter_generate_content(model_name=OPENROUTER_MODEL_NAME, contents=contents)
+            else:
+                raise # Re-raise other ServerErrors or if fallback is not enabled
 
 def find_first_image(directory):
     for filename in os.listdir(directory):
@@ -120,7 +135,7 @@ def find_first_image(directory):
             return os.path.join(directory, filename)
     return None
 
-def process_image_and_generate_prompts(image_directory="img/ready/"):
+def process_image_and_generate_prompts(image_directory="img/ready/", api_source="gemini"):
     image_path = find_first_image(image_directory)
 
     if not image_path:
@@ -132,52 +147,43 @@ def process_image_and_generate_prompts(image_directory="img/ready/"):
 
     mime_type = "image/jpeg" if image_path.lower().endswith(('.jpg', '.jpeg')) else "image/png"
 
-    image_part = types.Part.from_bytes(
-        data=image_bytes,
-        mime_type=mime_type
+    image_url = upload_image_to_freeimagehost(image_path)
+    if not image_url:
+        print("Failed to upload image to freeimage.host. Cannot proceed with image processing.")
+        return None
+
+    # Prepare contents for _generate_content based on API source
+    if api_source == "openrouter":
+        # For OpenRouter, use the direct image URL
+        image_part_for_api = {
+            "type": "image_url",
+            "image_url": {"url": image_url}
+        }
+    else: # For Gemini, use types.Part
+        image_part_for_api = types.Part.from_bytes(
+            data=image_bytes,
+            mime_type=mime_type
+        )
+
+    response_text = _generate_content(
+        api_source=api_source,
+        model_name="gemini-2.5-flash",
+        contents=[
+            image_part_for_api,
+            "Describe this image in detail."
+        ],
     )
+    response = MockTextResponse(response_text) if api_source == "openrouter" else response_text
 
-    try:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[
-                image_part,
-                "Describe this image in detail."
-            ],
-        )
-    except genai.errors.ServerError as e:
-        if e.status_code == 503 and USE_OPENROUTER_FALLBACK:
-            print("Gemini API overloaded (503). Falling back to OpenRouter for image description.")
-            response = openrouter_generate_content(
-                model_name=OPENROUTER_MODEL_NAME,
-                contents=[
-                    image_part,
-                    "Describe this image in detail."
-                ]
-            )
-        else:
-            raise # Re-raise other ServerErrors or if fallback is not enabled
-
-    try:
-        brief_response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[
-                image_part,
-                "Provide a very brief, one or two word description of the main object in this image."
-            ],
-        )
-    except genai.errors.ServerError as e:
-        if e.status_code == 503 and USE_OPENROUTER_FALLBACK:
-            print("Gemini API overloaded (503). Falling back to OpenRouter for brief image description.")
-            brief_response = openrouter_generate_content(
-                model_name=OPENROUTER_MODEL_NAME,
-                contents=[
-                    image_part,
-                    "Provide a very brief, one or two word description of the main object in this image."
-                ]
-            )
-        else:
-            raise # Re-raise other ServerErrors or if fallback is not enabled
+    brief_response_text = _generate_content(
+        api_source=api_source,
+        model_name="gemini-2.5-flash",
+        contents=[
+            image_part_for_api,
+            "Provide a very brief, one or two word description of the main object in this image."
+        ],
+    )
+    brief_response = MockTextResponse(brief_response_text) if api_source == "openrouter" else brief_response_text
     brief_description = brief_response.text.strip().replace(" ", "_").replace("/", "_").replace("\\", "_").replace(":", "_").replace("*", "_").replace("?", "_").replace("\"", "_").replace("<", "_").replace(">", "_").replace("|", "_")
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
@@ -197,48 +203,26 @@ def process_image_and_generate_prompts(image_directory="img/ready/"):
         f.write(response.text)
     print("Description written to src/image_description.txt")
 
-    try:
-        image_prompt_response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[
-                f"Convert the following image description into a concise prompt suitable for an image generation model: {response.text}"
-            ],
-        )
-    except genai.errors.ServerError as e:
-        if e.status_code == 503 and USE_OPENROUTER_FALLBACK:
-            print("Gemini API overloaded (503). Falling back to OpenRouter for image generation prompt.")
-            image_prompt_response = openrouter_generate_content(
-                model_name=OPENROUTER_MODEL_NAME,
-                contents=[
-                    f"Convert the following image description into a concise prompt suitable for an image generation model: {response.text}"
-                ]
-            )
-        else:
-            raise # Re-raise other ServerErrors or if fallback is not enabled
-    image_prompt = image_prompt_response.text
+    image_prompt_response = _generate_content(
+        api_source=api_source,
+        model_name="gemini-2.5-flash",
+        contents=[
+            f"Convert the following image description into a concise prompt suitable for an image generation model: {response.text}"
+        ],
+    )
+    image_prompt = image_prompt_response if api_source == "openrouter" else image_prompt_response.text
     with open("src/img_gen.txt", "w") as f:
         f.write(image_prompt)
     print("Image generation prompt written to src/img_gen.txt")
 
-    try:
-        video_prompt_response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[
-                f"Convert the following image description into a concise prompt suitable for a video generation model. Focus exclusively on movement, changes, human expression, or background alterations. Absolutely avoid any static image descriptions. Keep it concise (under 100 words): {response.text}"
-            ],
-        )
-    except genai.errors.ServerError as e:
-        if e.status_code == 503 and USE_OPENROUTER_FALLBACK:
-            print("Gemini API overloaded (503). Falling back to OpenRouter for video generation prompt.")
-            video_prompt_response = openrouter_generate_content(
-                model_name=OPENROUTER_MODEL_NAME,
-                contents=[
-                    f"Convert the following image description into a concise prompt suitable for a video generation model. Focus exclusively on movement, changes, human expression, or background alterations. Absolutely avoid any static image descriptions. Keep it concise (under 100 words): {response.text}"
-                ]
-            )
-        else:
-            raise # Re-raise other ServerErrors or if fallback is not enabled
-    video_prompt = video_prompt_response.text
+    video_prompt_response = _generate_content(
+        api_source=api_source,
+        model_name="gemini-2.5-flash",
+        contents=[
+            f"Convert the following image description into a concise prompt suitable for a video generation model. Focus exclusively on movement, changes, human expression, or background alterations. Absolutely avoid any static image descriptions. Keep it concise (under 100 words): {response.text}"
+        ],
+    )
+    video_prompt = video_prompt_response if api_source == "openrouter" else video_prompt_response.text
     with open("src/video_gen.txt", "w") as f:
         f.write(video_prompt)
     print("Video generation prompt written to src/video_gen.txt")
@@ -254,7 +238,12 @@ def process_image_and_generate_prompts(image_directory="img/ready/"):
     }
 
 if __name__ == "__main__":
-    output_data = process_image_and_generate_prompts()
+    parser = argparse.ArgumentParser(description="Process an image and generate prompts using Gemini or OpenRouter API.")
+    parser.add_argument("--api-source", type=str, default="openrouter", choices=["gemini", "openrouter"],
+                        help="Specify the API source to use: 'gemini' or 'openrouter'. Defaults to 'openrouter'.")
+    args = parser.parse_args()
+
+    output_data = process_image_and_generate_prompts(api_source=args.api_source)
 
     if output_data:
         output_dir = Path("out/prompt_json")
