@@ -61,7 +61,6 @@ python3 scripts/generate_video_kling.py img/ready/my_image.jpeg src/video_prompt
 ```
 The generated video (MP4 format) will be saved in the `out/` directory. The processed JSON file will be moved to `out/prompt_json/used/`.
 
-
 To run the script multiple times (e.g., 10 times) in a loop, use the following command (replace with your image and JSON file paths):
 ```bash
 for i in {1..10}; do python3 scripts/generate_video_kling.py img/ready/my_image.jpeg src/video_prompt.json; done
@@ -143,7 +142,6 @@ To run the script multiple times (e.g., 10 times) in a loop, use:
 for i in {1..10}; do python3 scripts/generate_video_duomi.py; done
 ```
 
----
 
 ## Gemini Video Prompt Refinement
 
