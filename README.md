@@ -63,7 +63,7 @@ The generated video (MP4 format) will be saved in the `out/` directory. The proc
 
 To run the script multiple times (e.g., 10 times) in a loop, use the following command:
 ```bash
-for i in {1..10}; do python3 scripts/generate_video_kling.py; done
+for i in {1..10}; do python3 scripts/generate_video_duomi.py; done
 ```
 
 ---

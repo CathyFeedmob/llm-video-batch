@@ -1,0 +1,8 @@
+{
+  "pic_name": "No_object._20250905003954_9968.png",
+  "video_name": "No_object._20250905003954_9968.mp4",
+  "video_prompt": "**Focusing on implied user interaction and its consequences:**\n\nA user attempts to upload content, resulting in a sudden, prominent \"403 Forbidden\" display. Text then appears explaining \"Registration is required to upload adult content.\" The screen remains static after this final text appears.",
+  "image_prompt": "Generate a black screen with white text. At the top, \"FREE IMAGE HOST\" appears. Below it, a large \"403\" is centered. Beneath the \"403,\" it reads: \"Registration is required to upload adult content.\"",
+  "image_url": "https://iili.io/KCXAuGs.png",
+  "refined_video_prompt": "A visual response to an implied user interaction triggers. A prominent \"403 Forbidden\" error abruptly flashes into view, displacing previous content. Immediately after, an explanatory text gently appears beneath it, outlining the registration requirement as the final on-screen alteration."
+}
