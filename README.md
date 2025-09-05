@@ -61,9 +61,86 @@ python3 scripts/generate_video_kling.py img/ready/my_image.jpeg src/video_prompt
 ```
 The generated video (MP4 format) will be saved in the `out/` directory. The processed JSON file will be moved to `out/prompt_json/used/`.
 
-To run the script multiple times (e.g., 10 times) in a loop, use the following command:
+
+To run the script multiple times (e.g., 10 times) in a loop, use the following command (replace with your image and JSON file paths):
 ```bash
-for i in {1..10}; do python3 scripts/generate_video_kling.py; done
+for i in {1..10}; do python3 scripts/generate_video_kling.py img/ready/my_image.jpeg src/video_prompt.json; done
+```
+
+---
+
+## Duomi AI Video Generation
+
+This section details how to use the `scripts/generate_video_duomi.py` script to generate videos using the Duomi AI API.
+
+### Prerequisites
+- Python 3.x
+- `python-dotenv`
+- `requests`
+- `google-generativeai` (for prompt refinement with Gemini)
+
+You can install the required Python packages using pip:
+```bash
+pip install python-dotenv requests google-generativeai
+```
+
+You will also need to set up your Duomi and Gemini API keys as environment variables. Create a `.env` file in the project root with the following:
+```
+DUOMI_API_KEY="YOUR_DUOMI_API_KEY"
+GEMINI_API_KEY="YOUR_GEMINI_API_KEY"
+```
+Replace with your actual API keys from Duomi AI and Google AI Studio.
+
+**Optional OpenRouter Fallback:**
+If you want to use OpenRouter as a fallback when Gemini API is overloaded, add these to your `.env` file:
+```
+OPENROUTER_API_KEY="YOUR_OPENROUTER_API_KEY"
+OPENROUTER_MODEL_NAME="anthropic/claude-3.5-sonnet"
+USE_OPENROUTER_FALLBACK="true"
+```
+
+### JSON File Preparation
+The script requires a JSON file that specifies at least the `video_prompt`, `video_name`, and `image_url`.
+
+Example `duomi_prompt.json`:
+```json
+{
+  "video_prompt": "A highly stylized and vibrant digital illustration of a young woman's face in a tight close-up...",
+  "video_name": "MyDuomiVideo",
+  "image_url": "https://example.com/my_image.jpeg"
+}
+```
+
+### Execution
+The `generate_video_duomi.py` script can be run in multiple ways:
+
+1. **Auto-detect mode** (recommended): The script will automatically find the latest JSON file and execute `test_gemini_vision.py` to prepare image and JSON data:
+   ```bash
+   python3 scripts/generate_video_duomi.py
+   ```
+
+2. **With specific JSON file**:
+   ```bash
+   python3 scripts/generate_video_duomi.py "" path/to/your/prompt.json
+   ```
+
+3. **With both image URL and JSON file**:
+   ```bash
+   python3 scripts/generate_video_duomi.py "https://example.com/my_image.jpeg" path/to/your/prompt.json
+   ```
+
+**Features:**
+- Automatically executes `test_gemini_vision.py` to prepare image and JSON data
+- Uses Gemini 2.5 Flash to refine video prompts for better results
+- Supports OpenRouter fallback when Gemini API is overloaded
+- Polls video generation status and downloads the completed video
+- Moves processed images from `img/ready/` to `img/generated/`
+- Moves processed JSON files to `out/prompt_json/used/`
+- Logs all video generation attempts to `logs/video_generation_log.jsonl`
+
+To run the script multiple times (e.g., 10 times) in a loop, use:
+```bash
+for i in {1..10}; do python3 scripts/generate_video_duomi.py; done
 ```
 
 ---
