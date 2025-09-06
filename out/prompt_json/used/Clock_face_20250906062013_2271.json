@@ -1,0 +1,8 @@
+{
+  "pic_name": "Clock_face_20250906062013_2271.png",
+  "video_name": "Clock_face_20250906062013_2271.mp4",
+  "video_prompt": "A monochrome clock of vertical rods dynamically forms. The \"hands\" of the clock, also composed of shifting rods, sweep and reshape to indicate time. The background ripples with countless tiny, extending cylinders, changing their density and length to create an undulating relief. The entire structure subtly pulsates and reforms with a pixelated, evolving texture.",
+  "image_prompt": "Grayscale abstract art, clock face and hands composed entirely of varied-length vertical rods/spikes. Medium gray background. Circular clock outline from rods; hour hand at 4 o'clock, minute hand at 10 o'clock, both formed by dense rod clusters. Light from above, creating white/light gray tops and dark undersides on rods. Pincushion/cityscape texture. Pixelated/digitized 3D extrusion effect. Bottom right: white text \"c29\". Modern, digital aesthetic, playing with depth and texture.",
+  "image_url": "https://iili.io/KnloeJS.png",
+  "refined_video_prompt": "Vertical rods dynamically form a clock. Its rod-composed hands sweep, shift, and reshape to indicate time. The background ripples as countless tiny cylinders extend and retract, varying density and length to create an undulating relief. The entire structure subtly pulsates and reforms, its pixelated texture continuously evolving."
+}
