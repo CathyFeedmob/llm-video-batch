@@ -51,6 +51,7 @@ class ImageProcessor:
     def __init__(self, 
                  ready_dir: str = "img/ready",
                  uploaded_dir: str = "img/uploaded",
+                 processed_dir: str = "img/processed",
                  json_output_dir: str = "out/prompt_json", 
                  csv_log_path: str = "logs/image_uploading.csv"):
         """
@@ -59,11 +60,13 @@ class ImageProcessor:
         Args:
             ready_dir: Directory containing images to process
             uploaded_dir: Directory to save downloaded images
+            processed_dir: Directory to move processed original images
             json_output_dir: Directory to save JSON files for video generation
             csv_log_path: Path to CSV log file
         """
         self.ready_dir = Path(ready_dir)
         self.uploaded_dir = Path(uploaded_dir)
+        self.processed_dir = Path(processed_dir)
         self.json_output_dir = Path(json_output_dir)
         self.csv_log_path = Path(csv_log_path)
         
@@ -73,11 +76,15 @@ class ImageProcessor:
         
         # Ensure directories exist
         self.uploaded_dir.mkdir(parents=True, exist_ok=True)
+        self.processed_dir.mkdir(parents=True, exist_ok=True)
         self.json_output_dir.mkdir(parents=True, exist_ok=True)
         self.csv_log_path.parent.mkdir(parents=True, exist_ok=True)
         
         # Initialize CSV if it doesn't exist
         self._init_csv_log()
+        
+        # Load processed images cache
+        self.processed_images = self._load_processed_images()
     
     def _init_csv_log(self):
         """Initialize CSV log file with headers if it doesn't exist."""
@@ -89,6 +96,64 @@ class ImageProcessor:
                     'upload_url', 'image_size_after_download', 'json_filename',
                     'downloaded_filename', 'processing_time_seconds', 'status', 'error_message'
                 ])
+    
+    def _load_processed_images(self) -> set:
+        """
+        Load list of already processed images from CSV log.
+        
+        Returns:
+            Set of processed image filenames
+        """
+        processed = set()
+        if self.csv_log_path.exists():
+            try:
+                with open(self.csv_log_path, 'r', encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        if row.get('status') == 'success':
+                            processed.add(row.get('original_filename'))
+                print(f"📋 Found {len(processed)} previously processed images")
+            except Exception as e:
+                print(f"⚠️ Warning: Could not load processed images list: {e}")
+        return processed
+    
+    def is_already_processed(self, filename: str) -> bool:
+        """
+        Check if an image has already been processed successfully.
+        
+        Args:
+            filename: Image filename to check
+            
+        Returns:
+            True if already processed, False otherwise
+        """
+        return filename in self.processed_images
+    
+    def move_to_processed(self, image_path: Path, descriptive_name: str) -> bool:
+        """
+        Move successfully processed image to processed directory with descriptive name.
+        
+        Args:
+            image_path: Original image path
+            descriptive_name: AI-generated descriptive name
+            
+        Returns:
+            True if moved successfully, False otherwise
+        """
+        try:
+            # Create new filename with descriptive name and timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            new_filename = f"{descriptive_name}_{timestamp}_PROCESSED{image_path.suffix}"
+            processed_path = self.processed_dir / new_filename
+            
+            # Move the file
+            image_path.rename(processed_path)
+            print(f"📁 Moved to processed: {new_filename}")
+            return True
+            
+        except Exception as e:
+            print(f"⚠️ Warning: Could not move image to processed directory: {e}")
+            return False
     
     def find_images(self) -> List[Path]:
         """
@@ -237,6 +302,33 @@ class ImageProcessor:
         
         return f"{safe_title}{extension}"
     
+    def format_file_size(self, size_bytes: int) -> str:
+        """
+        Convert file size in bytes to human-readable format.
+        
+        Args:
+            size_bytes: File size in bytes
+            
+        Returns:
+            Human-readable file size string (e.g., "16.9 MB", "1.2 KB")
+        """
+        if size_bytes == 0:
+            return "0 B"
+        
+        size_names = ["B", "KB", "MB", "GB", "TB"]
+        i = 0
+        size = float(size_bytes)
+        
+        while size >= 1024.0 and i < len(size_names) - 1:
+            size /= 1024.0
+            i += 1
+        
+        # Format with appropriate decimal places
+        if i == 0:  # Bytes
+            return f"{int(size)} {size_names[i]}"
+        else:
+            return f"{size:.1f} {size_names[i]}"
+    
     def log_to_csv(self, result: ProcessingResult, original_size: int, downloaded_size: Optional[int]):
         """
         Log processing result to CSV file.
@@ -276,6 +368,16 @@ class ImageProcessor:
         original_size = image_path.stat().st_size
         
         print(f"\n🔄 Processing: {original_filename}")
+        
+        # Check if already processed
+        if self.is_already_processed(original_filename):
+            print(f"⏭️ Skipping {original_filename} - already processed successfully")
+            return ProcessingResult(
+                success=False,
+                original_filename=original_filename,
+                error="Already processed - skipped",
+                processing_time=time.time() - start_time
+            )
         
         try:
             # Step 1: Upload image
@@ -320,22 +422,7 @@ class ImageProcessor:
             image_filename = f"{descriptive_name}_{timestamp}{image_path.suffix}"
             video_filename = f"{descriptive_name}_{timestamp}.mp4"
             
-            # Step 5: Create complete video generation JSON
-            video_json = {
-                "pic_name": image_filename,
-                "video_name": video_filename,
-                "video_prompt": prompt_data["video_prompt"],
-                "image_prompt": prompt_data["image_prompt"],
-                "image_url": upload_url
-            }
-            
-            # Step 5: Save JSON file to out/prompt_json/
-            json_path = self.json_output_dir / json_filename
-            with open(json_path, 'w', encoding='utf-8') as f:
-                json.dump(video_json, f, indent=4, ensure_ascii=False)
-            print(f"✅ Video JSON saved: {json_filename}")
-            
-            # Step 6: Download image with wget to img/uploaded/
+            # Step 5: Download image with wget to img/uploaded/
             downloaded_image_path = self.uploaded_dir / image_filename
             downloaded_size = self.download_image_with_wget(upload_url, downloaded_image_path)
             
@@ -349,6 +436,22 @@ class ImageProcessor:
                     processing_time=time.time() - start_time
                 )
             
+            # Step 6: Create complete video generation JSON with image size
+            video_json = {
+                "pic_name": image_filename,
+                "video_name": video_filename,
+                "video_prompt": prompt_data["video_prompt"],
+                "image_prompt": prompt_data["image_prompt"],
+                "image_url": upload_url,
+                "image_size": self.format_file_size(downloaded_size)
+            }
+            
+            # Step 7: Save JSON file to out/prompt_json/
+            json_path = self.json_output_dir / json_filename
+            with open(json_path, 'w', encoding='utf-8') as f:
+                json.dump(video_json, f, indent=4, ensure_ascii=False)
+            print(f"✅ Video JSON saved: {json_filename}")
+            
             processing_time = time.time() - start_time
             result = ProcessingResult(
                 success=True,
@@ -359,8 +462,14 @@ class ImageProcessor:
                 processing_time=processing_time
             )
             
-            # Step 6: Log to CSV
+            # Step 7: Log to CSV
             self.log_to_csv(result, original_size, downloaded_size)
+            
+            # Step 8: Move original image to processed directory
+            self.move_to_processed(image_path, descriptive_name)
+            
+            # Step 9: Add to processed images cache to prevent reprocessing
+            self.processed_images.add(original_filename)
             
             print(f"✅ Processing completed in {processing_time:.2f}s")
             return result

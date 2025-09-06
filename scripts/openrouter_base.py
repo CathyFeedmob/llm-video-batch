@@ -388,7 +388,7 @@ class OpenRouterClient:
                             mime_type: Optional[str] = None,
                             api_source: str = "openrouter") -> GenerationResult:
         """
-        Get a brief 1-2 word description of the main object in an image.
+        Get a brief 2-3 word description of the main object in an image.
         
         Args:
             image_url: URL of image to analyze
@@ -399,7 +399,7 @@ class OpenRouterClient:
         Returns:
             GenerationResult with brief description
         """
-        prompt = "Provide a very brief, one or two word description of the main object in this image."
+        prompt = "Provide a very brief, two or three word description of the main object in this image."
         return self.analyze_image(
             image_url=image_url,
             image_data=image_data,
