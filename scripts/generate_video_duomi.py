@@ -8,10 +8,12 @@ Usage:
   python3 scripts/generate_video_duomi.py <image_url> <path_to_json_file>
 
 This script:
-- Reads an image URL and video prompt from a JSON file.
-- Calls the Duomi AI imageToVideo API to generate a video.
-- Polls the operation until completion.
-- Downloads and saves the resulting MP4.
+- Checks for existing JSON files in out/prompt_json and matches them with images in img/ready
+- Uses existing JSON files instead of regenerating them when possible
+- Only calls test_gemini_vision.py when no matching JSON file exists
+- Calls the Duomi AI imageToVideo API to generate a video
+- Polls the operation until completion
+- Downloads and saves the resulting MP4
 """
 import time
 import os
@@ -32,6 +34,7 @@ JSON_USED_DIR = Path("out/prompt_json/used")
 JSON_USED_DIR.mkdir(parents=True, exist_ok=True)
 IMG_GENERATED_DIR = Path("img/generated")
 IMG_GENERATED_DIR.mkdir(parents=True, exist_ok=True)
+IMG_READY_DIR = Path("img/ready")
 LOGS_DIR = Path("logs")
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 LOG_FILE = LOGS_DIR / "video_generation_log.jsonl"
@@ -134,6 +137,45 @@ def log_video_generation(timestamp, image_used, video_name, processing_duration_
         f.write(json.dumps(log_entry) + "\n")
     print(f"Logged video generation: {status}")
 
+def find_matching_json_for_image(image_path, json_dir):
+    """Find a JSON file that matches the given image based on pic_name."""
+    image_name = Path(image_path).name
+    
+    # Look for JSON files in the directory
+    for json_file in json_dir.glob("*.json"):
+        # Skip JSON files that start with "Error_message" (case-insensitive)
+        if json_file.name.lower().startswith("error_message"):
+            print(f"Skipping failure JSON file: {json_file}")
+            continue
+            
+        try:
+            with open(json_file, "r") as f:
+                data = json.load(f)
+                pic_name = data.get("pic_name")
+                if pic_name and pic_name == image_name:
+                    print(f"Found matching JSON file: {json_file} for image: {image_name}")
+                    return json_file
+        except (json.JSONDecodeError, FileNotFoundError) as e:
+            print(f"Error reading JSON file {json_file}: {e}")
+            continue
+    
+    return None
+
+def find_images_without_json(img_ready_dir, json_dir):
+    """Find images in img/ready that don't have corresponding JSON files."""
+    images_without_json = []
+    
+    # Get all image files in img/ready
+    image_extensions = {'.png', '.jpg', '.jpeg'}
+    for image_file in img_ready_dir.iterdir():
+        if image_file.is_file() and image_file.suffix.lower() in image_extensions:
+            # Check if there's a matching JSON file
+            matching_json = find_matching_json_for_image(image_file, json_dir)
+            if not matching_json:
+                images_without_json.append(image_file)
+    
+    return images_without_json
+
 def main():
     # Initialize variables for logging
     generation_start_time = time.time()
@@ -143,13 +185,6 @@ def main():
     final_json_file_path = None
 
     try:
-        print("Executing scripts/test_gemini_vision.py to prepare image and JSON data...")
-        result = subprocess.run(["python3", "scripts/test_gemini_vision.py"], capture_output=True, text=True)
-        if result.returncode != 0:
-            print(f"Error executing test_gemini_vision.py: {result.stderr}")
-            return
-        print("test_gemini_vision.py executed successfully.")
-
         DUOMI_API_KEY = os.environ.get("DUOMI_API_KEY")
         if not DUOMI_API_KEY:
             print("Error: set DUOMI_API_KEY environment variable with your API key.")
@@ -161,19 +196,76 @@ def main():
             return
 
         JSON_PROMPT_DIR = Path("out/prompt_json")
-        IMG_READY_DIR = Path("img/ready")
-
+        
         image_file_path = None
         json_file_path = None
 
+        # Check if specific image and JSON paths were provided as command line arguments
         if len(sys.argv) > 1:
             image_file_path = sys.argv[1]
         
         if len(sys.argv) > 2:
             json_file_path = sys.argv[2]
 
+        # If no JSON file path provided, look for existing JSON files and match with images
         if not json_file_path:
-            print("No JSON file path provided. Attempting to find the latest JSON file automatically...")
+            print("No JSON file path provided. Checking for existing JSON files and matching images...")
+            
+            # Find all JSON files and try to match them with images in img/ready
+            json_files = list(JSON_PROMPT_DIR.glob("*.json"))
+            matched_pairs = []
+            
+            for json_file in json_files:
+                # Skip JSON files that start with "Error_message" (case-insensitive)
+                if json_file.name.lower().startswith("error_message"):
+                    print(f"Skipping failure JSON file: {json_file}")
+                    continue
+                    
+                try:
+                    with open(json_file, "r") as f:
+                        data = json.load(f)
+                        pic_name = data.get("pic_name")
+                        if pic_name:
+                            image_path = IMG_READY_DIR / pic_name
+                            if image_path.exists():
+                                matched_pairs.append((image_path, json_file))
+                                print(f"Found matching pair: {pic_name} <-> {json_file.name}")
+                except (json.JSONDecodeError, FileNotFoundError) as e:
+                    print(f"Error reading JSON file {json_file}: {e}")
+                    continue
+            
+            if matched_pairs:
+                # Use the first matched pair
+                image_file_path, json_file_path = matched_pairs[0]
+                print(f"Using matched pair: {image_file_path} and {json_file_path}")
+            else:
+                # No matched pairs found, check if we need to generate JSON for any images
+                images_without_json = find_images_without_json(IMG_READY_DIR, JSON_PROMPT_DIR)
+                
+                if images_without_json:
+                    print(f"Found {len(images_without_json)} images without corresponding JSON files.")
+                    print("Executing scripts/test_gemini_vision.py to generate JSON for the first image...")
+                    result = subprocess.run(["python3", "scripts/test_gemini_vision.py"], capture_output=True, text=True)
+                    if result.returncode != 0:
+                        print(f"Error executing test_gemini_vision.py: {result.stderr}")
+                        return
+                    print("test_gemini_vision.py executed successfully.")
+                    
+                    # Now try to find the newly created JSON file
+                    json_files = sorted(JSON_PROMPT_DIR.glob("*.json"), key=os.path.getmtime, reverse=True)
+                    if json_files:
+                        json_file_path = json_files[0]
+                        print(f"Found newly created JSON file: {json_file_path}")
+                    else:
+                        print("Error: No JSON files found after running test_gemini_vision.py")
+                        return
+                else:
+                    print("No images found in img/ready directory.")
+                    return
+
+        # If we still don't have a JSON file path, try to find the latest one
+        if not json_file_path:
+            print("Attempting to find the latest JSON file automatically...")
             json_files = sorted(JSON_PROMPT_DIR.glob("*.json"), key=os.path.getmtime, reverse=True)
             if not json_files:
                 print(f"Error: No JSON files found in {JSON_PROMPT_DIR}. Please provide a JSON file path or ensure files exist.")
@@ -188,6 +280,7 @@ def main():
                 data = json.load(f)
                 video_prompt = data.get("video_prompt")
                 video_name = data.get("video_name")
+                pic_name = data.get("pic_name")
                 image_url_from_json = data.get("image_url") # Get image_url from JSON
                 # Duomi specific parameters from JSON, if available
                 image_tail = data.get("image_tail", "")
@@ -326,7 +419,6 @@ def main():
                     continue # Continue polling if not succeeded/failed/canceled
 
                 # Move the image from img/ready to img/generated regardless of success or failure
-                pic_name = data.get("pic_name") # Get the original image name from JSON
                 if pic_name:
                     source_image_path = IMG_READY_DIR / pic_name
                     destination_image_path = IMG_GENERATED_DIR / pic_name
