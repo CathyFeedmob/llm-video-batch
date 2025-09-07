@@ -38,6 +38,7 @@ Stores information about uploaded images and their processing status.
 | processed_path | TEXT | - | - | Path to processed image |
 | created_at | TEXT | NOT NULL | datetime('now') | Record creation time |
 | updated_at | TEXT | NOT NULL | datetime('now') | Last update time |
+| origin_image_id | INTEGER | FK | - | Reference to original image if this image was generated based on another |
 
 **Status Values:**
 - `pending` - Image queued for processing
@@ -62,8 +63,9 @@ Stores various prompt variations generated for each image.
 | created_at | TEXT | NOT NULL | datetime('now') | Record creation time |
 | updated_at | TEXT | NOT NULL | datetime('now') | Last update time |
 
-**Foreign Key:**
+**Foreign Keys:**
 - `image_id` → `images.id`
+- `origin_image_id` → `images.id` (self-referencing for image-to-image generation)
 
 ### videos Table
 
@@ -99,11 +101,13 @@ Stores video generation results and metadata.
 
 ```
 images (1) ←→ (1) prompts ←→ (1) videos
+images (1) ←→ (0..n) images (self-referencing via origin_image_id)
 ```
 
 - Each image can have one set of prompts
 - Each prompt set can generate one video
-- The relationship is maintained through foreign keys
+- Images can reference other images as their origin (for image-to-image generation)
+- The relationships are maintained through foreign keys
 
 ## Special Records
 
@@ -182,6 +186,42 @@ SELECT
 FROM images i
 WHERE i.status = 'success'
 ORDER BY i.processing_time_seconds DESC;
+```
+
+### Get generated images with their origin images
+```sql
+SELECT 
+    generated.descriptive_name as generated_image,
+    original.descriptive_name as origin_image,
+    generated.created_at as generation_date
+FROM images generated
+JOIN images original ON generated.origin_image_id = original.id
+ORDER BY generated.created_at DESC;
+```
+
+### Get image generation chains (images and their derivatives)
+```sql
+SELECT 
+    original.descriptive_name as original_image,
+    COUNT(generated.id) as derivatives_count
+FROM images original
+LEFT JOIN images generated ON original.id = generated.origin_image_id
+GROUP BY original.id, original.descriptive_name
+HAVING derivatives_count > 0
+ORDER BY derivatives_count DESC;
+```
+
+### Get all original images (not generated from other images)
+```sql
+SELECT 
+    i.descriptive_name,
+    i.upload_url,
+    i.status,
+    i.created_at
+FROM images i
+WHERE i.origin_image_id IS NULL
+AND i.status = 'success'
+ORDER BY i.created_at DESC;
 ```
 
 ## Migration Notes

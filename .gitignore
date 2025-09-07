@@ -212,3 +212,4 @@ src/
 img/generated/
 src/*.txt
 tmp/
+out/generated_images/
