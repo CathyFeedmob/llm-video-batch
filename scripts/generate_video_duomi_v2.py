@@ -53,21 +53,23 @@ def select_video_prompt(data):
     rand = random.randint(1, 100)
     
     # Select prompt based on probability distribution
-    if rand <= 45 and refined_prompt:  # 45% chance
+    # Currently using 100% refined_video_prompt
+    if refined_prompt:  # 100% chance for refined prompt
         # Add signature for refined prompts only
-        selected_prompt = refined_prompt + " A subtle, art dynamic styled signature 'c29' appears in the right bottom corner to mark the creator of this video."
+        selected_prompt = refined_prompt #+ " A subtle, art dynamic styled signature 'c29' appears in the right bottom corner to mark the creator of this video."
         prompt_type = "refined_video_prompt"
-    elif rand <= 70 and creative_prompt_3:  # 25% chance (45 + 25 = 70)
-        selected_prompt = creative_prompt_3
-        prompt_type = "creative_video_prompt_3"
-    elif rand <= 85 and creative_prompt_1:  # 15% chance (70 + 15 = 85)
-        selected_prompt = creative_prompt_1
-        prompt_type = "creative_video_prompt_1"
-    elif rand <= 100 and creative_prompt_2:  # 15% chance (85 + 15 = 100)
-        selected_prompt = creative_prompt_2
-        prompt_type = "creative_video_prompt_2"
+    # Creative prompts commented out for future use
+    # elif rand <= 70 and creative_prompt_3:  # 25% chance (45 + 25 = 70)
+    #     selected_prompt = creative_prompt_3
+    #     prompt_type = "creative_video_prompt_3"
+    # elif rand <= 85 and creative_prompt_1:  # 15% chance (70 + 15 = 85)
+    #     selected_prompt = creative_prompt_1
+    #     prompt_type = "creative_video_prompt_1"
+    # elif rand <= 100 and creative_prompt_2:  # 15% chance (85 + 15 = 100)
+    #     selected_prompt = creative_prompt_2
+    #     prompt_type = "creative_video_prompt_2"
     else:
-        # Fallback to original video_prompt if selected prompt is not available
+        # Fallback to original video_prompt if refined prompt is not available
         selected_prompt = fallback_prompt
         prompt_type = "video_prompt (fallback)"
     
