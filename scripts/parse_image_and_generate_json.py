@@ -226,6 +226,110 @@ class ImageProcessor:
             print(f"❌ Download error: {e}")
             return None
     
+    def refine_prompt_with_openrouter(self, original_prompt: str) -> str:
+        """
+        Refines the given prompt using OpenRouter.
+        
+        Args:
+            original_prompt: Original video prompt to refine
+            
+        Returns:
+            Refined prompt focused on movement, or original prompt if refinement fails
+        """
+        try:
+            refine_prompt = (
+                f"Refine the following video prompt for an image-to-video model. Focus exclusively on movement, "
+                f"changes, human expression, or background alterations. Absolutely avoid any static image descriptions. "
+                f"Keep it concise (under 100 words): {original_prompt}"
+            )
+            
+            print(f"Refining prompt with OpenRouter: '{original_prompt}'")
+            result = self.openrouter_client.generate_content(
+                prompt=refine_prompt,
+                api_source="openrouter"
+            )
+            
+            if result.success and result.content:
+                refined_prompt = result.content.strip()
+                print(f"Refined prompt: '{refined_prompt}'")
+                return refined_prompt
+            else:
+                print(f"❌ Prompt refinement failed: {result.error}")
+                return original_prompt
+                
+        except Exception as e:
+            print(f"❌ Error refining prompt: {e}")
+            return original_prompt
+    
+    def generate_creative_movement_prompts(self, image_url: str, base_prompt: str) -> List[str]:
+        """
+        Generate 3 additional creative movement-focused prompts with aggressive imagination.
+        
+        Args:
+            image_url: URL of uploaded image
+            base_prompt: Base video prompt to build upon
+            
+        Returns:
+            List of 3 creative movement prompts
+        """
+        creative_prompts = []
+        
+        # Prompt 1: Aggressive/Dynamic Movement
+        aggressive_prompt = (
+            f"Based on this image and the base prompt '{base_prompt}', create an AGGRESSIVE and DYNAMIC video prompt "
+            f"that focuses on intense, unexpected movements. Think of objects suddenly coming to life, dramatic "
+            f"transformations, explosive energy, rapid changes, or supernatural phenomena. Make static objects move "
+            f"in ways they shouldn't - buildings swaying, statues walking, water flowing upward, fire dancing wildly. "
+            f"Focus purely on dramatic movement and action, not static descriptions. Keep under 100 words."
+        )
+        
+        # Prompt 2: Surreal/Impossible Movement
+        surreal_prompt = (
+            f"Based on this image and the base prompt '{base_prompt}', create a SURREAL and IMPOSSIBLE video prompt "
+            f"that defies physics and reality. Imagine gravity reversing, time flowing backward, objects morphing into "
+            f"other forms, colors bleeding and shifting, dimensions warping, or magical transformations. Make everything "
+            f"move in dreamlike, impossible ways that challenge perception. Focus on fantastical movement only. "
+            f"Keep under 100 words."
+        )
+        
+        # Prompt 3: Cinematic/Dramatic Movement
+        cinematic_prompt = (
+            f"Based on this image and the base prompt '{base_prompt}', create a CINEMATIC and DRAMATIC video prompt "
+            f"with movie-like camera movements and theatrical actions. Think of dramatic zoom-ins, sweeping camera "
+            f"movements, characters performing unexpected actions, environmental storytelling through movement, "
+            f"lighting changes that create mood, or action sequences. Make it feel like a movie scene with compelling "
+            f"movement and visual storytelling. Focus on cinematic motion only. Keep under 100 words."
+        )
+        
+        prompts_to_generate = [
+            ("aggressive", aggressive_prompt),
+            ("surreal", surreal_prompt), 
+            ("cinematic", cinematic_prompt)
+        ]
+        
+        for prompt_type, prompt_text in prompts_to_generate:
+            try:
+                print(f"Generating {prompt_type} creative movement prompt...")
+                result = self.openrouter_client.generate_content(
+                    prompt=prompt_text,
+                    image_url=image_url,
+                    api_source="openrouter"
+                )
+                
+                if result.success and result.content:
+                    creative_prompts.append(result.content.strip())
+                    print(f"✅ {prompt_type.capitalize()} prompt generated")
+                else:
+                    print(f"❌ {prompt_type.capitalize()} prompt generation failed: {result.error}")
+                    # Fallback prompt
+                    creative_prompts.append(f"Enhanced {prompt_type} movement based on: {base_prompt}")
+                    
+            except Exception as e:
+                print(f"❌ Error generating {prompt_type} prompt: {e}")
+                creative_prompts.append(f"Enhanced {prompt_type} movement based on: {base_prompt}")
+        
+        return creative_prompts
+
     def generate_video_json_with_openrouter(self, image_url: str, original_filename: str) -> Optional[Dict[str, Any]]:
         """
         Generate video generation JSON using OpenRouter based on image URL.
@@ -276,10 +380,21 @@ class ImageProcessor:
             print(f"❌ Video prompt generation failed: {video_result.error}")
             return None
         
+        # Refine the original video prompt
+        base_video_prompt = video_result.content.strip()
+        refined_video_prompt = self.refine_prompt_with_openrouter(base_video_prompt)
+        
+        # Generate 3 additional creative movement prompts
+        creative_prompts = self.generate_creative_movement_prompts(image_url, base_video_prompt)
+        
         print("✅ Video generation JSON created successfully")
         return {
             "image_prompt": image_result.content.strip(),
-            "video_prompt": video_result.content.strip()
+            "video_prompt": base_video_prompt,
+            "refined_video_prompt": refined_video_prompt,
+            "creative_video_prompt_1": creative_prompts[0] if len(creative_prompts) > 0 else "Enhanced aggressive movement",
+            "creative_video_prompt_2": creative_prompts[1] if len(creative_prompts) > 1 else "Enhanced surreal movement", 
+            "creative_video_prompt_3": creative_prompts[2] if len(creative_prompts) > 2 else "Enhanced cinematic movement"
         }
     
     def create_safe_filename(self, title: str, extension: str = ".json") -> str:
@@ -436,12 +551,16 @@ class ImageProcessor:
                     processing_time=time.time() - start_time
                 )
             
-            # Step 6: Create complete video generation JSON with image size
+            # Step 6: Create complete video generation JSON with image size and all prompts
             video_json = {
                 "pic_name": image_filename,
                 "video_name": video_filename,
                 "video_prompt": prompt_data["video_prompt"],
                 "image_prompt": prompt_data["image_prompt"],
+                "refined_video_prompt": prompt_data["refined_video_prompt"],
+                "creative_video_prompt_1": prompt_data["creative_video_prompt_1"],
+                "creative_video_prompt_2": prompt_data["creative_video_prompt_2"],
+                "creative_video_prompt_3": prompt_data["creative_video_prompt_3"],
                 "image_url": upload_url,
                 "image_size": self.format_file_size(downloaded_size)
             }
