@@ -54,7 +54,8 @@ def select_video_prompt(data):
     
     # Select prompt based on probability distribution
     if rand <= 45 and refined_prompt:  # 45% chance
-        selected_prompt = refined_prompt
+        # Add signature for refined prompts only
+        selected_prompt = refined_prompt + " A subtle, art dynamic styled signature 'c29' appears in the right bottom corner to mark the creator of this video."
         prompt_type = "refined_video_prompt"
     elif rand <= 70 and creative_prompt_3:  # 25% chance (45 + 25 = 70)
         selected_prompt = creative_prompt_3
