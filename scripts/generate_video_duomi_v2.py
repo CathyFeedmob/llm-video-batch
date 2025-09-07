@@ -18,6 +18,7 @@ import os
 import json
 import requests
 import shutil
+import random
 from pathlib import Path
 from datetime import datetime
 import dotenv
@@ -33,7 +34,46 @@ LOG_FILE = LOGS_DIR / "video_generation_log.jsonl"
 
 dotenv.load_dotenv()
 
-def log_video_generation(timestamp, image_url, video_name, processing_duration_seconds, json_file_path, status):
+def select_video_prompt(data):
+    """
+    Select video prompt based on probability distribution:
+    - 45% chance: refined_video_prompt
+    - 25% chance: creative_video_prompt_3
+    - 15% chance: creative_video_prompt_1
+    - 15% chance: creative_video_prompt_2
+    """
+    # Get available prompts from data
+    refined_prompt = data.get("refined_video_prompt")
+    creative_prompt_1 = data.get("creative_video_prompt_1")
+    creative_prompt_2 = data.get("creative_video_prompt_2")
+    creative_prompt_3 = data.get("creative_video_prompt_3")
+    fallback_prompt = data.get("video_prompt")
+    
+    # Generate random number between 0 and 100
+    rand = random.randint(1, 100)
+    
+    # Select prompt based on probability distribution
+    if rand <= 45 and refined_prompt:  # 45% chance
+        selected_prompt = refined_prompt
+        prompt_type = "refined_video_prompt"
+    elif rand <= 70 and creative_prompt_3:  # 25% chance (45 + 25 = 70)
+        selected_prompt = creative_prompt_3
+        prompt_type = "creative_video_prompt_3"
+    elif rand <= 85 and creative_prompt_1:  # 15% chance (70 + 15 = 85)
+        selected_prompt = creative_prompt_1
+        prompt_type = "creative_video_prompt_1"
+    elif rand <= 100 and creative_prompt_2:  # 15% chance (85 + 15 = 100)
+        selected_prompt = creative_prompt_2
+        prompt_type = "creative_video_prompt_2"
+    else:
+        # Fallback to original video_prompt if selected prompt is not available
+        selected_prompt = fallback_prompt
+        prompt_type = "video_prompt (fallback)"
+    
+    print(f"Selected prompt type: {prompt_type} (random: {rand})")
+    return selected_prompt, prompt_type
+
+def log_video_generation(timestamp, image_url, video_name, processing_duration_seconds, json_file_path, status, prompt_type=None):
     """Logs video generation details to a JSONL file."""
     log_entry = {
         "timestamp": timestamp,
@@ -41,7 +81,8 @@ def log_video_generation(timestamp, image_url, video_name, processing_duration_s
         "video_name": str(video_name) if video_name else "N/A",
         "processing_duration_seconds": processing_duration_seconds,
         "json_file_path": str(json_file_path) if json_file_path else "N/A",
-        "status": status
+        "status": status,
+        "prompt_type": prompt_type if prompt_type else "N/A"
     }
     with open(LOG_FILE, "a") as f:
         f.write(json.dumps(log_entry) + "\n")
@@ -53,6 +94,7 @@ def process_json_file(json_file_path):
     generation_status = "failure"
     final_video_name = None
     final_image_url = None
+    selected_prompt_type = None
 
     try:
         DUOMI_API_KEY = os.environ.get("DUOMI_API_KEY")
@@ -87,9 +129,12 @@ def process_json_file(json_file_path):
 
         final_image_url = image_url
         
+        # Select video prompt based on probability distribution
+        selected_video_prompt, selected_prompt_type = select_video_prompt(data)
+        
         print(f"Processing: {json_file_path}")
         print(f"Image URL: {image_url}")
-        print(f"Video prompt: {video_prompt}")
+        print(f"Selected video prompt: {selected_video_prompt}")
         print(f"Video name: {video_name}")
 
         video_name_stem = Path(video_name).stem
@@ -112,7 +157,7 @@ def process_json_file(json_file_path):
                 "image_tail": image_tail,
                 "image_list": image_list,
                 "aspect_ratio": aspect_ratio,
-                "prompt": video_prompt,
+                "prompt": selected_video_prompt,
                 "negative_prompt": "Over-saturated tones, overexposed, static, blurred details, subtitles, style, artwork, painting, frame, motionless, overall grayish, worst quality, low quality, JPEG compression artifacts, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, limbs in distorted shapes, fused fingers, motionless frames, chaotic backgrounds, three legs, crowded background with many people, walking backward.",
                 "cfg_scale": 0.5,
                 "callback_url": callback_url
@@ -226,7 +271,8 @@ def process_json_file(json_file_path):
             video_name=final_video_name,
             processing_duration_seconds=processing_duration,
             json_file_path=json_file_path,
-            status=generation_status
+            status=generation_status,
+            prompt_type=selected_prompt_type
         )
 
 def main():
