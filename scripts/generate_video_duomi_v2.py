@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generate a short video using Duomi AI's imageToVideo API.
+Generate a short video using Duomi AI's imageToVideo API with SQLite database integration.
 
 Usage:
   pip install python-dotenv requests
@@ -8,9 +8,9 @@ Usage:
   python3 scripts/generate_video_duomi_v2.py
 
 This script:
-- Processes JSON files from out/prompt_json/
-- Uses image_url, video_prompt, and video_name from JSON files
-- Moves processed JSON files to out/prompt_json/used/
+- Queries pending videos from SQLite database
+- Uses refined_video_prompt from database
+- Updates video status in database during generation
 - Calls the Duomi AI imageToVideo API to generate videos
 """
 import time
@@ -23,6 +23,9 @@ from pathlib import Path
 from datetime import datetime
 import dotenv
 
+# Import database manager
+from database_manager import DatabaseManager
+
 OUT_DIR = Path("out")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 JSON_PROMPT_DIR = Path("out/prompt_json")
@@ -34,47 +37,24 @@ LOG_FILE = LOGS_DIR / "video_generation_log.jsonl"
 
 dotenv.load_dotenv()
 
-def select_video_prompt(data):
+def get_video_prompt_from_db(video_record):
     """
-    Select video prompt based on probability distribution:
-    - 45% chance: refined_video_prompt
-    - 25% chance: creative_video_prompt_3
-    - 15% chance: creative_video_prompt_1
-    - 15% chance: creative_video_prompt_2
+    Get the refined video prompt from database record.
+    Always use refined_video_prompt as specified in requirements.
     """
-    # Get available prompts from data
-    refined_prompt = data.get("refined_video_prompt")
-    creative_prompt_1 = data.get("creative_video_prompt_1")
-    creative_prompt_2 = data.get("creative_video_prompt_2")
-    creative_prompt_3 = data.get("creative_video_prompt_3")
-    fallback_prompt = data.get("video_prompt")
+    refined_prompt = video_record.get("refined_video_prompt")
     
-    # Generate random number between 0 and 100
-    rand = random.randint(1, 100)
-    
-    # Select prompt based on probability distribution
-    # Currently using 100% refined_video_prompt
-    if refined_prompt:  # 100% chance for refined prompt
-        # Add signature for refined prompts only
-        selected_prompt = refined_prompt #+ " A subtle, art dynamic styled signature 'c29' appears in the right bottom corner to mark the creator of this video."
-        prompt_type = "refined_video_prompt"
-    # Creative prompts commented out for future use
-    # elif rand <= 70 and creative_prompt_3:  # 25% chance (45 + 25 = 70)
-    #     selected_prompt = creative_prompt_3
-    #     prompt_type = "creative_video_prompt_3"
-    # elif rand <= 85 and creative_prompt_1:  # 15% chance (70 + 15 = 85)
-    #     selected_prompt = creative_prompt_1
-    #     prompt_type = "creative_video_prompt_1"
-    # elif rand <= 100 and creative_prompt_2:  # 15% chance (85 + 15 = 100)
-    #     selected_prompt = creative_prompt_2
-    #     prompt_type = "creative_video_prompt_2"
+    if refined_prompt:
+        selected_prompt = refined_prompt
+        prompt_type = "refined"
+        print(f"Using refined video prompt: {prompt_type}")
+        return selected_prompt, prompt_type
     else:
-        # Fallback to original video_prompt if refined prompt is not available
-        selected_prompt = fallback_prompt
-        prompt_type = "video_prompt (fallback)"
-    
-    print(f"Selected prompt type: {prompt_type} (random: {rand})")
-    return selected_prompt, prompt_type
+        # Fallback to base video prompt if refined is not available
+        fallback_prompt = video_record.get("video_prompt")
+        prompt_type = "base"
+        print(f"Refined prompt not available, using fallback: {prompt_type}")
+        return fallback_prompt, prompt_type
 
 def log_video_generation(timestamp, image_url, video_name, processing_duration_seconds, json_file_path, status, prompt_type=None):
     """Logs video generation details to a JSONL file."""
@@ -91,13 +71,14 @@ def log_video_generation(timestamp, image_url, video_name, processing_duration_s
         f.write(json.dumps(log_entry) + "\n")
     print(f"Logged video generation: {status}")
 
-def process_json_file(json_file_path):
-    """Process a single JSON file and generate video."""
+def process_video_from_db(db_manager, video_record):
+    """Process a single video record from database and generate video."""
     generation_start_time = time.time()
-    generation_status = "failure"
+    generation_status = "failed"
     final_video_name = None
     final_image_url = None
     selected_prompt_type = None
+    video_id = video_record['id']
 
     try:
         DUOMI_API_KEY = os.environ.get("DUOMI_API_KEY")
@@ -105,44 +86,33 @@ def process_json_file(json_file_path):
             print("Error: set DUOMI_API_KEY environment variable with your API key.")
             return False
 
-        # Load JSON data
-        try:
-            with open(json_file_path, "r") as f:
-                data = json.load(f)
-                video_prompt = data.get("video_prompt")
-                video_name = data.get("video_name")
-                image_url = data.get("image_url")
-                
-                # Optional Duomi specific parameters from JSON
-                image_tail = data.get("image_tail", "")
-                image_list = data.get("image_list", [])
-                aspect_ratio = data.get("aspect_ratio", "16:9")
-                callback_url = data.get("callback_url", "")
-                duration = data.get("duration", 5)
-        except FileNotFoundError:
-            print(f"Error: JSON file not found at {json_file_path}")
-            return False
-        except json.JSONDecodeError:
-            print(f"Error: Could not decode JSON from {json_file_path}")
-            return False
+        # Extract data from database record
+        video_filename = video_record.get("video_filename")
+        image_url = video_record.get("upload_url")
         
-        if not video_prompt or not video_name or not image_url:
-            print(f"Error: JSON file must contain 'video_prompt', 'video_name', and 'image_url' keys. File: {json_file_path}")
+        # Get video prompt from database (use refined prompt)
+        selected_video_prompt, selected_prompt_type = get_video_prompt_from_db(video_record)
+        
+        if not selected_video_prompt or not video_filename or not image_url:
+            error_msg = "Missing required data: video_prompt, video_filename, or image_url"
+            print(f"Error: {error_msg}")
+            db_manager.update_video_status(video_id, "failed", error_message=error_msg)
             return False
 
         final_image_url = image_url
         
-        # Select video prompt based on probability distribution
-        selected_video_prompt, selected_prompt_type = select_video_prompt(data)
-        
-        print(f"Processing: {json_file_path}")
+        print(f"Processing Video ID: {video_id}")
         print(f"Image URL: {image_url}")
         print(f"Selected video prompt: {selected_video_prompt}")
-        print(f"Video name: {video_name}")
+        print(f"Video filename: {video_filename}")
 
-        video_name_stem = Path(video_name).stem
+        video_name_stem = Path(video_filename).stem
         OUT_FILE = OUT_DIR / f"{video_name_stem}.mp4"
         final_video_name = OUT_FILE
+
+        # Update database status to "generating"
+        print(f"📝 Updating video status to 'generating'...")
+        db_manager.update_video_status(video_id, "generating")
 
         print("Step 1: Calling Duomi AI image2video API...")
         HEADERS = {
@@ -155,15 +125,15 @@ def process_json_file(json_file_path):
             payload = {
                 "model_name": "kling-v2-1",
                 "mode": "std",
-                "duration": int(duration),
+                "duration": 5,  # Default duration
                 "image": image_url,
-                "image_tail": image_tail,
-                "image_list": image_list,
-                "aspect_ratio": aspect_ratio,
+                "image_tail": "",
+                "image_list": [],
+                "aspect_ratio": "16:9",
                 "prompt": selected_video_prompt,
                 "negative_prompt": "Over-saturated tones, overexposed, static, blurred details, subtitles, style, artwork, painting, frame, motionless, overall grayish, worst quality, low quality, JPEG compression artifacts, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, limbs in distorted shapes, fused fingers, motionless frames, chaotic backgrounds, three legs, crowded background with many people, walking backward.",
                 "cfg_scale": 0.5,
-                "callback_url": callback_url
+                "callback_url": ""
             }
             response = requests.post(
                 f"{DUOMI_API_BASE_URL}/api/video/kling/v1/videos/image2video",
@@ -174,23 +144,32 @@ def process_json_file(json_file_path):
             try:
                 initial_response = response.json()
             except json.JSONDecodeError:
-                print(f"Error: Could not decode JSON from Duomi API response. Raw response: {response.text}")
+                error_msg = f"Could not decode JSON from Duomi API response. Raw response: {response.text}"
+                print(f"Error: {error_msg}")
+                db_manager.update_video_status(video_id, "failed", error_message=error_msg)
                 return False
             
             if initial_response.get("code") != 0:
-                print(f"Error from Duomi API: {initial_response.get('message', 'Unknown error')}")
+                error_msg = f"Error from Duomi API: {initial_response.get('message', 'Unknown error')}"
+                print(f"Error: {error_msg}")
+                db_manager.update_video_status(video_id, "failed", error_message=error_msg)
                 return False
 
             task_id = initial_response["data"]["task_id"]
             print(f"Video generation started. Task ID: {task_id}")
 
         except requests.exceptions.RequestException as e:
-            print(f"Error calling Duomi API: {e}")
+            error_msg = f"Error calling Duomi API: {e}"
+            print(error_msg)
             if hasattr(e, 'response') and e.response is not None:
+                error_msg += f" Response: {e.response.text}"
                 print(f"Response content: {e.response.text}")
+            db_manager.update_video_status(video_id, "failed", error_message=error_msg)
             return False
         except Exception as e:
-            print(f"An unexpected error occurred: {e}")
+            error_msg = f"An unexpected error occurred: {e}"
+            print(error_msg)
+            db_manager.update_video_status(video_id, "failed", error_message=error_msg)
             return False
 
         # Poll for video generation status
@@ -224,16 +203,29 @@ def process_json_file(json_file_path):
                         with open(OUT_FILE, "wb") as f:
                             for chunk in video_response.iter_content(chunk_size=8192):
                                 f.write(chunk)
+                        
+                        file_size = OUT_FILE.stat().st_size
                         print(f"Generated video saved to {OUT_FILE}")
                         print(f"Total video generation and download time: {elapsed_time:.2f}s")
-                        generation_status = "success"
+                        
+                        # Update database with success
+                        db_manager.update_video_status(
+                            video_id, 
+                            "completed", 
+                            video_path=str(OUT_FILE),
+                            file_size=file_size,
+                            generation_time=elapsed_time
+                        )
+                        generation_status = "completed"
                     else:
                         print("Video generation succeeded, but no video URL found in response. Waiting for video URL...")
                         time.sleep(10)
                         continue
                 elif task_status in ["failed", "canceled"]:
-                    print(f"Video generation failed or was canceled. Status: {task_status}")
-                    generation_status = "failure"
+                    error_msg = f"Video generation failed or was canceled. Status: {task_status}"
+                    print(error_msg)
+                    db_manager.update_video_status(video_id, "failed", error_message=error_msg)
+                    generation_status = "failed"
                 else:
                     print("Waiting for video generation to complete...")
                     time.sleep(10)
@@ -242,29 +234,28 @@ def process_json_file(json_file_path):
                 break
 
             except requests.exceptions.RequestException as e:
-                print(f"Error polling Duomi API status: {e}")
+                error_msg = f"Error polling Duomi API status: {e}"
+                print(error_msg)
                 if hasattr(e, 'response') and e.response is not None:
+                    error_msg += f" Response: {e.response.text}"
                     print(f"Response content: {e.response.text}")
-                generation_status = "failure"
+                db_manager.update_video_status(video_id, "failed", error_message=error_msg)
+                generation_status = "failed"
                 break
             except Exception as e:
-                print(f"An unexpected error occurred during polling: {e}")
-                generation_status = "failure"
+                error_msg = f"An unexpected error occurred during polling: {e}"
+                print(error_msg)
+                db_manager.update_video_status(video_id, "failed", error_message=error_msg)
+                generation_status = "failed"
                 break
 
-        # Move JSON file to used directory
-        try:
-            destination_path = JSON_USED_DIR / Path(json_file_path).name
-            shutil.move(json_file_path, destination_path)
-            print(f"Moved JSON file to {destination_path}")
-        except Exception as e:
-            print(f"Error moving JSON file: {e}")
-
-        return generation_status == "success"
+        return generation_status == "completed"
 
     except Exception as e:
-        print(f"An unhandled error occurred processing {json_file_path}: {e}")
-        generation_status = "failure"
+        error_msg = f"An unhandled error occurred processing video ID {video_id}: {e}"
+        print(error_msg)
+        db_manager.update_video_status(video_id, "failed", error_message=error_msg)
+        generation_status = "failed"
         return False
     finally:
         processing_duration = time.time() - generation_start_time
@@ -273,65 +264,62 @@ def process_json_file(json_file_path):
             image_url=final_image_url,
             video_name=final_video_name,
             processing_duration_seconds=processing_duration,
-            json_file_path=json_file_path,
+            json_file_path=f"video_id_{video_id}",
             status=generation_status,
             prompt_type=selected_prompt_type
         )
 
 def main():
-    """Main function to process all JSON files in out/prompt_json/"""
-    print("Starting video generation from JSON files...")
+    """Main function to process pending videos from SQLite database."""
+    print("Starting video generation from SQLite database...")
     
-    # Check if JSON prompt directory exists
-    if not JSON_PROMPT_DIR.exists():
-        print(f"Error: Directory {JSON_PROMPT_DIR} does not exist.")
+    # Initialize database manager
+    try:
+        db_manager = DatabaseManager()
+        db_manager.initialize_database()
+        print("✅ Database initialized successfully")
+    except Exception as e:
+        print(f"❌ Error initializing database: {e}")
         return
     
-    # Find all JSON files in the directory
-    json_files = list(JSON_PROMPT_DIR.glob("*.json"))
-    
-    if not json_files:
-        print(f"No JSON files found in {JSON_PROMPT_DIR}")
+    # Get pending videos from database
+    try:
+        pending_videos = db_manager.get_pending_videos()
+        print(f"📊 Found {len(pending_videos)} pending videos in database")
+    except Exception as e:
+        print(f"❌ Error querying pending videos: {e}")
         return
     
-    # Filter out error files
-    valid_json_files = []
-    for json_file in json_files:
-        if json_file.name.lower().startswith("error_message"):
-            print(f"Skipping error JSON file: {json_file}")
-            continue
-        valid_json_files.append(json_file)
-    
-    if not valid_json_files:
-        print("No valid JSON files found to process.")
+    if not pending_videos:
+        print("No pending videos found to process.")
         return
     
-    print(f"Found {len(valid_json_files)} JSON files to process:")
-    for json_file in valid_json_files:
-        print(f"  - {json_file.name}")
+    print(f"Found {len(pending_videos)} pending videos to process:")
+    for video in pending_videos:
+        print(f"  - Video ID {video['id']}: {video.get('video_filename', 'N/A')}")
     
-    # Process each JSON file
+    # Process each pending video
     successful_count = 0
     failed_count = 0
     
-    for json_file in valid_json_files:
+    for video_record in pending_videos:
         print(f"\n{'='*60}")
-        print(f"Processing file {successful_count + failed_count + 1}/{len(valid_json_files)}: {json_file.name}")
+        print(f"Processing video {successful_count + failed_count + 1}/{len(pending_videos)}: ID {video_record['id']}")
         print(f"{'='*60}")
         
-        success = process_json_file(json_file)
+        success = process_video_from_db(db_manager, video_record)
         if success:
             successful_count += 1
-            print(f"✅ Successfully processed: {json_file.name}")
+            print(f"✅ Successfully processed video ID: {video_record['id']}")
         else:
             failed_count += 1
-            print(f"❌ Failed to process: {json_file.name}")
+            print(f"❌ Failed to process video ID: {video_record['id']}")
     
     print(f"\n{'='*60}")
     print(f"Processing complete!")
     print(f"Successful: {successful_count}")
     print(f"Failed: {failed_count}")
-    print(f"Total: {len(valid_json_files)}")
+    print(f"Total: {len(pending_videos)}")
     print(f"{'='*60}")
 
 if __name__ == "__main__":
