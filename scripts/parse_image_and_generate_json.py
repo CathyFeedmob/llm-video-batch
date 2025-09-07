@@ -33,6 +33,7 @@ import re
 # Import existing modules
 from openrouter_base import OpenRouterClient
 from image_uploader import FreeImageHostUploader
+from database_manager import DatabaseManager, ImageRecord, PromptRecord, VideoRecord
 
 @dataclass
 class ProcessingResult:
@@ -73,6 +74,10 @@ class ImageProcessor:
         # Initialize components
         self.uploader = FreeImageHostUploader()
         self.openrouter_client = OpenRouterClient()
+        self.db_manager = DatabaseManager()
+        
+        # Initialize database
+        self.db_manager.initialize_database()
         
         # Ensure directories exist
         self.uploaded_dir.mkdir(parents=True, exist_ok=True)
@@ -83,8 +88,8 @@ class ImageProcessor:
         # Initialize CSV if it doesn't exist
         self._init_csv_log()
         
-        # Load processed images cache
-        self.processed_images = self._load_processed_images()
+        # Load processed images cache from database
+        self.processed_images = self._load_processed_images_from_db()
     
     def _init_csv_log(self):
         """Initialize CSV log file with headers if it doesn't exist."""
@@ -97,9 +102,26 @@ class ImageProcessor:
                     'downloaded_filename', 'processing_time_seconds', 'status', 'error_message'
                 ])
     
-    def _load_processed_images(self) -> set:
+    def _load_processed_images_from_db(self) -> set:
         """
-        Load list of already processed images from CSV log.
+        Load list of already processed images from database.
+        
+        Returns:
+            Set of processed image filenames
+        """
+        try:
+            processed_filenames = self.db_manager.get_processed_images()
+            processed = set(processed_filenames)
+            print(f"📋 Found {len(processed)} previously processed images in database")
+            return processed
+        except Exception as e:
+            print(f"⚠️ Warning: Could not load processed images from database: {e}")
+            # Fallback to CSV method
+            return self._load_processed_images_from_csv()
+    
+    def _load_processed_images_from_csv(self) -> set:
+        """
+        Load list of already processed images from CSV log (fallback method).
         
         Returns:
             Set of processed image filenames
@@ -112,9 +134,9 @@ class ImageProcessor:
                     for row in reader:
                         if row.get('status') == 'success':
                             processed.add(row.get('original_filename'))
-                print(f"📋 Found {len(processed)} previously processed images")
+                print(f"📋 Found {len(processed)} previously processed images in CSV")
             except Exception as e:
-                print(f"⚠️ Warning: Could not load processed images list: {e}")
+                print(f"⚠️ Warning: Could not load processed images list from CSV: {e}")
         return processed
     
     def is_already_processed(self, filename: str) -> bool:
@@ -470,7 +492,7 @@ class ImageProcessor:
     
     def process_single_image(self, image_path: Path) -> ProcessingResult:
         """
-        Process a single image through the complete pipeline.
+        Process a single image through the complete pipeline with database integration.
         
         Args:
             image_path: Path to image file
@@ -481,6 +503,7 @@ class ImageProcessor:
         start_time = time.time()
         original_filename = image_path.name
         original_size = image_path.stat().st_size
+        image_id = None
         
         print(f"\n🔄 Processing: {original_filename}")
         
@@ -495,9 +518,23 @@ class ImageProcessor:
             )
         
         try:
-            # Step 1: Upload image
+            # Step 1: Create initial image record in database
+            print(f"📝 Creating image record in database...")
+            image_record = ImageRecord(
+                original_filename=original_filename,
+                original_path=str(image_path),
+                file_size_bytes=original_size,
+                status="processing"
+            )
+            image_id = self.db_manager.insert_image_record(image_record)
+            print(f"✅ Image record created with ID: {image_id}")
+            
+            # Step 2: Upload image
+            print(f"📤 Uploading image...")
             upload_url = self.upload_image(image_path)
             if not upload_url:
+                # Update database with failure
+                self.db_manager.update_image_status(image_id, "failed", "Failed to upload image")
                 return ProcessingResult(
                     success=False,
                     original_filename=original_filename,
@@ -505,8 +542,17 @@ class ImageProcessor:
                     processing_time=time.time() - start_time
                 )
             
-            # Step 2: Get brief description for meaningful filename
-            print(f"Getting brief description for naming...")
+            # Update database with upload URL
+            print(f"📝 Updating database with upload URL...")
+            with self.db_manager.get_connection() as conn:
+                conn.execute(
+                    "UPDATE images SET upload_url = ?, status = ? WHERE id = ?",
+                    (upload_url, "uploaded", image_id)
+                )
+                conn.commit()
+            
+            # Step 3: Get brief description for meaningful filename
+            print(f"🤖 Getting brief description for naming...")
             brief_result = self.openrouter_client.get_brief_description(
                 image_url=upload_url,
                 api_source="openrouter"
@@ -520,9 +566,19 @@ class ImageProcessor:
                 descriptive_name = self.create_safe_filename(brief_result.content.strip(), "")
                 print(f"✅ Descriptive name: {descriptive_name}")
             
-            # Step 3: Generate video JSON using OpenRouter
+            # Update database with descriptive name
+            with self.db_manager.get_connection() as conn:
+                conn.execute(
+                    "UPDATE images SET descriptive_name = ? WHERE id = ?",
+                    (descriptive_name, image_id)
+                )
+                conn.commit()
+            
+            # Step 4: Generate video JSON using OpenRouter
+            print(f"🤖 Generating prompts...")
             prompt_data = self.generate_video_json_with_openrouter(upload_url, original_filename)
             if not prompt_data:
+                self.db_manager.update_image_status(image_id, "failed", "Failed to generate video JSON description")
                 return ProcessingResult(
                     success=False,
                     original_filename=original_filename,
@@ -531,17 +587,33 @@ class ImageProcessor:
                     processing_time=time.time() - start_time
                 )
             
-            # Step 4: Create filenames based on AI-analyzed descriptive name (with timestamp)
+            # Step 5: Create prompt record in database
+            print(f"📝 Creating prompt record in database...")
+            prompt_record = PromptRecord(
+                image_id=image_id,
+                image_prompt=prompt_data["image_prompt"],
+                video_prompt=prompt_data["video_prompt"],
+                refined_video_prompt=prompt_data["refined_video_prompt"],
+                creative_video_prompt_1=prompt_data["creative_video_prompt_1"],
+                creative_video_prompt_2=prompt_data["creative_video_prompt_2"],
+                creative_video_prompt_3=prompt_data["creative_video_prompt_3"]
+            )
+            prompt_id = self.db_manager.insert_prompt_record(prompt_record)
+            print(f"✅ Prompt record created with ID: {prompt_id}")
+            
+            # Step 6: Create filenames based on AI-analyzed descriptive name (with timestamp)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]  # milliseconds
             json_filename = f"{descriptive_name}_{timestamp}.json"
             image_filename = f"{descriptive_name}_{timestamp}{image_path.suffix}"
             video_filename = f"{descriptive_name}_{timestamp}.mp4"
             
-            # Step 5: Download image with wget to img/uploaded/
+            # Step 7: Download image with wget to img/uploaded/
+            print(f"📥 Downloading image...")
             downloaded_image_path = self.uploaded_dir / image_filename
             downloaded_size = self.download_image_with_wget(upload_url, downloaded_image_path)
             
             if downloaded_size is None:
+                self.db_manager.update_image_status(image_id, "failed", "Failed to download image")
                 return ProcessingResult(
                     success=False,
                     original_filename=original_filename,
@@ -551,7 +623,20 @@ class ImageProcessor:
                     processing_time=time.time() - start_time
                 )
             
-            # Step 6: Create complete video generation JSON with image size and all prompts
+            # Update database with downloaded image info
+            print(f"📝 Updating database with downloaded image info...")
+            with self.db_manager.get_connection() as conn:
+                conn.execute("""
+                    UPDATE images SET 
+                        uploaded_filename = ?, 
+                        uploaded_path = ?, 
+                        downloaded_size_bytes = ?,
+                        status = ?
+                    WHERE id = ?
+                """, (image_filename, str(downloaded_image_path), downloaded_size, "downloaded", image_id))
+                conn.commit()
+            
+            # Step 8: Create complete video generation JSON with image size and all prompts
             video_json = {
                 "pic_name": image_filename,
                 "video_name": video_filename,
@@ -565,13 +650,45 @@ class ImageProcessor:
                 "image_size": self.format_file_size(downloaded_size)
             }
             
-            # Step 7: Save JSON file to out/prompt_json/
+            # Step 9: Save JSON file to out/prompt_json/
             json_path = self.json_output_dir / json_filename
             with open(json_path, 'w', encoding='utf-8') as f:
                 json.dump(video_json, f, indent=4, ensure_ascii=False)
             print(f"✅ Video JSON saved: {json_filename}")
             
+            # Step 10: Create single video record (will use base prompt by default)
+            print(f"📝 Creating video record in database...")
+            video_record = VideoRecord(
+                image_id=image_id,
+                prompt_id=prompt_id,
+                video_filename=video_filename,
+                prompt_used=prompt_data["video_prompt"],  # Use base video prompt by default
+                prompt_type="base",
+                status="pending"
+            )
+            video_id = self.db_manager.insert_video_record(video_record)
+            print(f"✅ Video record created with ID: {video_id}")
+            
+            # Step 11: Move original image to processed directory
+            processed_path = None
+            if self.move_to_processed(image_path, descriptive_name):
+                timestamp_processed = datetime.now().strftime("%Y%m%d_%H%M%S")
+                processed_filename = f"{descriptive_name}_{timestamp_processed}_PROCESSED{image_path.suffix}"
+                processed_path = str(self.processed_dir / processed_filename)
+            
+            # Step 12: Update final status and processing time
             processing_time = time.time() - start_time
+            print(f"📝 Updating final status in database...")
+            with self.db_manager.get_connection() as conn:
+                conn.execute("""
+                    UPDATE images SET 
+                        processing_time_seconds = ?,
+                        processed_path = ?,
+                        status = ?
+                    WHERE id = ?
+                """, (processing_time, processed_path, "success", image_id))
+                conn.commit()
+            
             result = ProcessingResult(
                 success=True,
                 original_filename=original_filename,
@@ -581,21 +698,35 @@ class ImageProcessor:
                 processing_time=processing_time
             )
             
-            # Step 7: Log to CSV
+            # Step 13: Log to CSV (for backward compatibility)
             self.log_to_csv(result, original_size, downloaded_size)
             
-            # Step 8: Move original image to processed directory
-            self.move_to_processed(image_path, descriptive_name)
-            
-            # Step 9: Add to processed images cache to prevent reprocessing
+            # Step 14: Add to processed images cache to prevent reprocessing
             self.processed_images.add(original_filename)
             
             print(f"✅ Processing completed in {processing_time:.2f}s")
+            print(f"📊 Database records created: Image ID {image_id}, Prompt ID {prompt_id}, Video ID {video_id}")
             return result
             
         except Exception as e:
             error_msg = f"Unexpected error: {str(e)}"
             print(f"❌ {error_msg}")
+            
+            # Update database with error if image_id exists
+            if image_id:
+                try:
+                    processing_time = time.time() - start_time
+                    with self.db_manager.get_connection() as conn:
+                        conn.execute("""
+                            UPDATE images SET 
+                                processing_time_seconds = ?,
+                                status = ?,
+                                error_message = ?
+                            WHERE id = ?
+                        """, (processing_time, "failed", error_msg, image_id))
+                        conn.commit()
+                except Exception as db_error:
+                    print(f"⚠️ Failed to update database with error: {db_error}")
             
             result = ProcessingResult(
                 success=False,
@@ -604,7 +735,7 @@ class ImageProcessor:
                 processing_time=time.time() - start_time
             )
             
-            # Log failed attempt
+            # Log failed attempt to CSV
             self.log_to_csv(result, original_size, None)
             return result
     
