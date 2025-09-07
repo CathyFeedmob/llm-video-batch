@@ -56,6 +56,43 @@ def get_video_prompt_from_db(video_record):
         print(f"Refined prompt not available, using fallback: {prompt_type}")
         return fallback_prompt, prompt_type
 
+def move_json_to_used_directory(video_record):
+    """
+    Move the corresponding JSON file from out/prompt_json to out/prompt_json/used
+    after successful video generation.
+    """
+    try:
+        # Get the video filename to construct the JSON filename pattern
+        video_filename = video_record.get("video_filename")
+        if not video_filename:
+            print("⚠️ No video filename found in record, cannot move JSON file")
+            return
+        
+        # Extract the base name (without .mp4 extension) to match JSON files
+        video_stem = Path(video_filename).stem
+        
+        # Look for JSON files that match this video
+        json_files = list(JSON_PROMPT_DIR.glob("*.json"))
+        matching_json = None
+        
+        for json_file in json_files:
+            json_stem = json_file.stem
+            # Check if the JSON file stem matches the video stem
+            if json_stem == video_stem:
+                matching_json = json_file
+                break
+        
+        if matching_json:
+            # Move the JSON file to the used directory
+            destination = JSON_USED_DIR / matching_json.name
+            shutil.move(str(matching_json), str(destination))
+            print(f"📁 Moved JSON file {matching_json.name} to used directory")
+        else:
+            print(f"⚠️ No matching JSON file found for video {video_filename}")
+            
+    except Exception as e:
+        print(f"⚠️ Error moving JSON file to used directory: {e}")
+
 def log_video_generation(timestamp, image_url, video_name, processing_duration_seconds, json_file_path, status, prompt_type=None):
     """Logs video generation details to a JSONL file."""
     log_entry = {
@@ -217,6 +254,9 @@ def process_video_from_db(db_manager, video_record):
                             generation_time=elapsed_time
                         )
                         generation_status = "completed"
+                        
+                        # Move corresponding JSON file to used directory if it exists
+                        move_json_to_used_directory(video_record)
                     else:
                         print("Video generation succeeded, but no video URL found in response. Waiting for video URL...")
                         time.sleep(10)
