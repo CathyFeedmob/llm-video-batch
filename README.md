@@ -3,6 +3,10 @@
 This project provides scripts to generate videos using different Large Language Models (LLMs) and their respective APIs. Currently, it supports video generation via Kling AI and is being set up to use Gemini for refining video prompts.
 
 ## Table of Contents
+- [SQLite Web Viewer](#sqlite-web-viewer)
+  - [Installation](#installation)
+  - [Usage](#usage)
+  - [Features](#features)
 - [Kling AI Video Generation](#kling-ai-video-generation)
   - [Prerequisites](#prerequisites)
   - [JSON File Preparation](#json-file-preparation)
@@ -11,6 +15,64 @@ This project provides scripts to generate videos using different Large Language 
   - [Prerequisites](#prerequisites-1)
   - [JSON File Preparation](#json-file-preparation-1)
   - [Execution](#execution-1)
+
+---
+
+## SQLite Web Viewer
+
+This project includes a web-based SQLite database viewer for browsing and querying the `llm_video_batch.db` database that stores information about images, prompts, and generated videos.
+
+### Installation
+
+Install the sqlite-web package using pip:
+
+```bash
+pip install sqlite-web
+```
+
+### Usage
+
+To start the SQLite web viewer:
+
+```bash
+python3 -m sqlite_web data/llm_video_batch.db --host 0.0.0.0 --port 8081
+```
+
+Then open your web browser and navigate to:
+```
+http://localhost:8081
+```
+
+### Features
+
+- **Table Browsing**: View all database tables (images, prompts, videos) with paginated results
+- **SQL Query Interface**: Execute custom SQL queries with syntax highlighting
+- **Data Export**: Export query results to CSV, JSON, and other formats
+- **Schema Information**: View table structures, indexes, and relationships
+- **Real-time Data**: Browse live data as it's updated by the video generation scripts
+
+### Common Queries
+
+Here are some useful queries for analyzing your video generation data:
+
+```sql
+-- Image processing statistics
+SELECT status, COUNT(*) as count FROM images GROUP BY status;
+
+-- Video generation services usage
+SELECT generation_service, COUNT(*) as count FROM videos GROUP BY generation_service;
+
+-- Recent activity
+SELECT * FROM images ORDER BY created_at DESC LIMIT 10;
+
+-- Join images with their prompts
+SELECT i.original_filename, p.video_prompt 
+FROM images i 
+LEFT JOIN prompts p ON i.id = p.image_id 
+LIMIT 10;
+```
+
+To stop the server, press `Ctrl+C` in the terminal.
 
 ---
 
