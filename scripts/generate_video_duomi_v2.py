@@ -168,7 +168,8 @@ def process_video_from_db(db_manager, video_record):
                 "image_list": [],
                 "aspect_ratio": "16:9",
                 "prompt": selected_video_prompt,
-                "negative_prompt": "Over-saturated tones, overexposed, static, blurred details, subtitles, style, artwork, painting, frame, motionless, overall grayish, worst quality, low quality, JPEG compression artifacts, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, limbs in distorted shapes, fused fingers, motionless frames, chaotic backgrounds, three legs, crowded background with many people, walking backward.",
+                "negative_prompt": "低质量，动画，拼贴，模糊，扭曲，电脑生成，变形，不符合逻辑的动作，改变五官，五官变形，改变画风，改变事物特征，不合逻辑的动作",
+                #"negative_prompt": "Over-saturated tones, overexposed, static, blurred details, subtitles, style, artwork, painting, frame, motionless, overall grayish, worst quality, low quality, JPEG compression artifacts, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, limbs in distorted shapes, fused fingers, motionless frames, chaotic backgrounds, three legs, crowded background with many people, walking backward.",
                 "cfg_scale": 0.5,
                 "callback_url": ""
             }
