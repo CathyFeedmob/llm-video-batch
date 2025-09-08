@@ -4,7 +4,7 @@ Parse Image and Generate JSON Function
 
 This module provides functionality to:
 1. Find images under img/ready
-2. Upload images using freeimage host uploader
+2. Upload images using ImageKit uploader
 3. Keep upload records in logs/image_uploading.csv
 4. Download uploaded images to img/uploaded using wget
 5. Use OpenRouter to generate JSON based on image URL
@@ -32,7 +32,7 @@ import re
 
 # Import existing modules
 from openrouter_base import OpenRouterClient
-from image_uploader import FreeImageHostUploader
+from image_uploader import create_uploader
 from database_manager import DatabaseManager, ImageRecord, PromptRecord, VideoRecord
 
 @dataclass
@@ -71,8 +71,8 @@ class ImageProcessor:
         self.json_output_dir = Path(json_output_dir)
         self.csv_log_path = Path(csv_log_path)
         
-        # Initialize components
-        self.uploader = FreeImageHostUploader()
+        # Initialize components (using ImageKit as default)
+        self.uploader = create_uploader("imagekit")
         self.openrouter_client = OpenRouterClient()
         self.db_manager = DatabaseManager()
         
@@ -200,7 +200,7 @@ class ImageProcessor:
     
     def upload_image(self, image_path: Path) -> Optional[str]:
         """
-        Upload image using freeimage host uploader.
+        Upload image using ImageKit uploader.
         
         Args:
             image_path: Path to image file
