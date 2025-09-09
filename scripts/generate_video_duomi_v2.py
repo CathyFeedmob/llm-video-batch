@@ -60,19 +60,30 @@ def move_json_to_used_directory(video_record):
     """
     Move the corresponding JSON file from out/prompt_json to out/prompt_json/used
     after successful video generation.
+    This function will not abort the video generation process if JSON files are missing.
     """
     try:
         # Get the video filename to construct the JSON filename pattern
         video_filename = video_record.get("video_filename")
         if not video_filename:
-            print("⚠️ No video filename found in record, cannot move JSON file")
+            print("⚠️ No video filename found in record, skipping JSON file move")
+            return
+        
+        # Check if the JSON prompt directory exists
+        if not JSON_PROMPT_DIR.exists():
+            print(f"⚠️ JSON prompt directory {JSON_PROMPT_DIR} does not exist, skipping JSON file move")
             return
         
         # Extract the base name (without .mp4 extension) to match JSON files
         video_stem = Path(video_filename).stem
         
         # Look for JSON files that match this video
-        json_files = list(JSON_PROMPT_DIR.glob("*.json"))
+        try:
+            json_files = list(JSON_PROMPT_DIR.glob("*.json"))
+        except Exception as e:
+            print(f"⚠️ Error listing JSON files in {JSON_PROMPT_DIR}: {e}, skipping JSON file move")
+            return
+            
         matching_json = None
         
         for json_file in json_files:
@@ -88,10 +99,11 @@ def move_json_to_used_directory(video_record):
             shutil.move(str(matching_json), str(destination))
             print(f"📁 Moved JSON file {matching_json.name} to used directory")
         else:
-            print(f"⚠️ No matching JSON file found for video {video_filename}")
+            print(f"ℹ️ No matching JSON file found for video {video_filename} - this is normal and will not affect video generation")
             
     except Exception as e:
-        print(f"⚠️ Error moving JSON file to used directory: {e}")
+        print(f"⚠️ Error moving JSON file to used directory: {e} - continuing with video generation process")
+        # Explicitly do not re-raise the exception to ensure video generation continues
 
 def log_video_generation(timestamp, image_url, video_name, processing_duration_seconds, json_file_path, status, prompt_type=None):
     """Logs video generation details to a JSONL file."""
@@ -168,8 +180,8 @@ def process_video_from_db(db_manager, video_record):
                 "image_list": [],
                 "aspect_ratio": "16:9",
                 "prompt": selected_video_prompt,
-                "negative_prompt": "低质量，动画，拼贴，模糊，扭曲，电脑生成，变形，不符合逻辑的动作，改变五官，五官变形，改变画风，改变事物特征，不合逻辑的动作",
-                #"negative_prompt": "Over-saturated tones, overexposed, static, blurred details, subtitles, style, artwork, painting, frame, motionless, overall grayish, worst quality, low quality, JPEG compression artifacts, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, limbs in distorted shapes, fused fingers, motionless frames, chaotic backgrounds, three legs, crowded background with many people, walking backward.",
+                #"negative_prompt": "低质量，动画，拼贴，模糊，扭曲，电脑生成，变形，不符合逻辑的动作，改变五官，五官变形，改变画风，改变事物特征，不合逻辑的动作",
+                "negative_prompt": "Over-saturated tones, overexposed, static, blurred details, subtitles, style, artwork, painting, frame, motionless, overall grayish, worst quality, low quality, JPEG compression artifacts, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, limbs in distorted shapes, fused fingers, motionless frames, chaotic backgrounds, three legs, crowded background with many people, walking backward.",
                 "cfg_scale": 0.5,
                 "callback_url": ""
             }
