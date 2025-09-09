@@ -2,7 +2,7 @@
 """
 Batch Image Upload Script
 
-This script uploads multiple images from img/ready directory to freeimagehost
+This script uploads multiple images from img/ready directory to ImageKit
 and generates a CSV log with local image names and uploaded URLs.
 
 Usage:
@@ -35,7 +35,7 @@ from typing import List, Set, Tuple, Optional
 import shutil
 
 # Import our custom image uploader
-from image_uploader import FreeImageHostUploader, UploadResult
+from image_uploader import create_uploader, UploadResult
 
 class BatchImageUploader:
     """Handles batch uploading of images with CSV logging."""
@@ -55,8 +55,8 @@ class BatchImageUploader:
         if self.move_uploaded:
             self.generated_dir.mkdir(parents=True, exist_ok=True)
         
-        # Initialize uploader with retry logic
-        self.uploader = FreeImageHostUploader(max_retries=max_retries, retry_delay=2.0)
+        # Initialize uploader with retry logic (using ImageKit as default)
+        self.uploader = create_uploader("imagekit", max_retries=max_retries, retry_delay=2.0)
         
         # CSV headers
         self.csv_headers = [
@@ -258,7 +258,7 @@ class BatchImageUploader:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Batch upload images from img/ready to freeimagehost",
+        description="Batch upload images from img/ready to ImageKit",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -320,10 +320,10 @@ Examples:
         print("❌ Error: Count cannot exceed 20")
         sys.exit(1)
     
-    # Check if API key is available
-    if not args.dry_run and not os.getenv("FREEIMAGE_API_KEY"):
-        print("❌ Error: FREEIMAGE_API_KEY environment variable not set")
-        print("Please set your API key in the .env file")
+    # Check if ImageKit credentials are available
+    if not args.dry_run and not os.getenv("IMAGEKIT_PRIVATE_KEY"):
+        print("❌ Error: IMAGEKIT_PRIVATE_KEY environment variable not set")
+        print("Please set your ImageKit credentials in the .env file")
         sys.exit(1)
     
     try:
