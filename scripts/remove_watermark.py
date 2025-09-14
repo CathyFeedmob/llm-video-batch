@@ -55,7 +55,7 @@ def remove_watermark_with_gemini(image_path, output_path, max_retries=3, retry_d
         return False
     
     # Prompt for watermark removal
-    prompt = "Remove imgnai.com watermark signature from upper left of the image, and add c29 watermark to bottom right in proper art form."
+    prompt = "Remove imgnai.com watermark signature from upper left of the image if there is one, and add c29 watermark to bottom right in proper art form."
     
     # Try processing with retries
     for attempt in range(max_retries):
