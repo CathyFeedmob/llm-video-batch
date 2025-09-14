@@ -28,13 +28,15 @@ If you don't have a Gemini API key, you can get one from [Google AI Studio](http
 ## Usage
 
 ```bash
-python remove_watermark.py [--input INPUT_FOLDER] [--output OUTPUT_FOLDER]
+python remove_watermark.py [--input INPUT_FOLDER] [--output OUTPUT_FOLDER] [--retries MAX_RETRIES] [--retry-delay DELAY]
 ```
 
 ### Arguments
 
 - `--input`, `-i`: Input folder containing watermarked images (default: `img/ready/watermark`)
 - `--output`, `-o`: Output folder for processed images (default: `img/ready/no-watermark`)
+- `--retries`, `-r`: Maximum number of retry attempts per image (default: 3)
+- `--retry-delay`, `-d`: Base delay between retries in seconds (default: 2)
 
 ### Examples
 
@@ -56,14 +58,31 @@ python remove_watermark.py --input custom/input/folder --output custom/output/fo
 python remove_watermark.py -i custom/input/folder -o custom/output/folder
 ```
 
+4. Specifying retry parameters:
+
+```bash
+python remove_watermark.py --retries 5 --retry-delay 3
+```
+
 ## How It Works
 
 The script:
 
 1. Takes each image from the input folder
 2. Sends the image to the Gemini API with a prompt to remove the watermark
-3. Receives the processed image from the API
-4. Saves the processed image to the output folder
+3. If the API call fails, retries with exponential backoff up to the specified maximum retries
+4. Receives the processed image from the API
+5. Saves the processed image to the output folder with a prefix based on the result:
+   - `success_` prefix for successfully processed images
+   - `failed_` prefix for images that couldn't be processed after all retry attempts
+
+## Retry Mechanism
+
+The script implements an exponential backoff strategy with jitter for retries:
+- Initial retry delay is specified by the `--retry-delay` parameter
+- Each subsequent retry increases the delay exponentially (delay * 2^attempt)
+- Random jitter is added to avoid the "thundering herd" problem
+- The maximum number of retry attempts is controlled by the `--retries` parameter
 
 ## Notes
 
@@ -71,3 +90,4 @@ The script:
 - Supported image formats: jpg, jpeg, png, gif, bmp, tiff
 - The script will create the output directory if it doesn't exist
 - The Gemini API may have usage limits depending on your account type
+- For failed images (after all retry attempts), the original image is copied to the output folder with the `failed_` prefix
