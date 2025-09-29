@@ -5,7 +5,7 @@ example from https://ai.google.dev/gemini-api/docs/video?example=dialogue
 
 Usage:
   pip install google-genai
-  export GEMINI_API_KEY="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"
+  export GEMINI_API_KEY="API KEY"
   python3 scripts/generate_video_gemini.py
 
 This script:
